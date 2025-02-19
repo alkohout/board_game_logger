@@ -1,0 +1,34 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Games Overview</title>
+    <!-- Your styles here -->
+</head>
+<body>
+    <h1>Games Overview</h1>
+    <button onclick="window.location.href='/'">Back to Home</button>
+    <button onclick="window.location.href='/imperium'">Overview of Imperium losses and wins</button>
+
+    {% import 'games_table.html' as tables %}
+
+    <h2>Games Played This Week</h2>
+    {{ tables.render_games_table(games_this_week) }}
+
+    <h2>Games Played Last Week</h2>
+    {{ tables.render_games_table(games_last_week) }}
+
+    <h2>Games Played This Month</h2>
+    {{ tables.render_games_table(games_this_month) }}
+
+    <h2>Games Played Last Month</h2>
+    {{ tables.render_games_table(games_last_month) }}
+
+    <h2>Games Played This Year</h2>
+    {{ tables.render_games_table(games_this_year) }}
+
+    <h2>Games Played Last Year</h2>
+    {{ tables.render_games_table(games_last_year) }}
+</body>
+</html>

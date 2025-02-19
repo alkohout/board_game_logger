@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log a Game</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        .autocomplete-suggestions {
+            border: none;
+            max-height: 150px;
+            overflow-y: auto;
+            position: absolute;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.7);
+            width: calc(80% - 2px);
+            color: #FFFFFF;
+        }
+        .autocomplete-suggestion {
+            padding: 10px;
+            cursor: pointer;
+        }
+        .autocomplete-suggestion:hover {
+            background: #f0f0f0;
+        }
+        body {
+            background-image: url("{{ url_for('static', filename='SG.webp') }}");
+            background-size: cover;
+            background-attachment: fixed;
+            background-attachment: scroll;
+            background-repeat: no-repeat;
+            background-position: center center;
+            color: #FFFFFF;
+        }
+        h1, label {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+        }
+        .form-container {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 400px;
+            margin: 20px auto;
+            position: relative;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<link rel="preload" href="{{ url_for('static', filename='SG.webp') }}" as="image">
+<body>
+    <div class="form-container">
+        <h1>Log a Game</h1>
+        <form action="/add" method="post">
+            <label for="date_played">Date Played:</label>
+            <input type="date" id="date_played" name="date_played" required>
+            <br><br>
+            <label for="game_title">Game Title:</label>
+            <input type="text" id="game_title" name="game_title" required autocomplete="off" style="border: none;">
+            <div id="add_suggestions" class="autocomplete-suggestions"></div>
+            <br><br>
+            <label for="result">Result:</label>
+            <textarea id="result" name="result" rows="1" cols="50" placeholder="Add result here..."></textarea>
+            <br><br>
+            <label for="level">Level:</label>
+            <textarea id="level" name="level" rows="1" cols="50" placeholder="Add my level here..."></textarea>
+            <br><br>
+            <label for="my_score">My Score:</label>
+            <textarea id="my_score" name="my_score" rows="1" cols="50" placeholder="Add my score here..."></textarea>
+            <br><br>
+            <label for="bot_score">Bot Score:</label>
+            <textarea id="bot_score" name="bot_score" rows="1" cols="50" placeholder="Add bot score here..."></textarea>
+            <br><br>
+            <label for="notes">Notes:</label>
+            <textarea id="notes" name="notes" rows="4" cols="50" placeholder="Add any notes here..."></textarea>
+            <br><br>
+            <button type="submit">Log Game</button>
+        </form>
+    </div>
+
+    <div class="form-container">
+        <h2>Game Info</h2>
+        <label for="search_title">Game Title:</label>
+        <input type="text" id="search_title" name="game_title" required autocomplete="off" style="border: none;">
+        <div id="search_suggestions" class="autocomplete-suggestions"></div>
+        <button id="search_button">Search</button>
+        <p id="search_result"></p>
+
+        <label for="search_nonempty_note">Latest Non-empty Entry:</label>
+        <button id="search_button_nonempty">Search</button>
+        <p id="search_result_nonempty"></p>
+
+        <label for="search_last_note">Edit Most Recent Note:</label>
+        <input type="text" id="search_last_note" name="game_title" required autocomplete="off" style="border: none;">
+        <button id="search_last_note" onclick="triggerSearch()">Edit</button>
+	<!-- Edit Note Button -->
+    	<button id="edit_note_button" style="display:none;" onclick="editNote()">Edit Note</button>
+   	<!-- Edit Note Container -->
+    	<div id="edit_note_container" style="display:none;">
+        	<textarea id="edit_note_input"></textarea>
+       		<button onclick="saveNote()">Save Note</button>
+    	</div>
+
+    </div>
+
+    <div class="form-container">
+        <h2>Games played</h2>
+        <table style="border-collapse: separate; border-spacing: 20px 0;">
+          <tr>
+            <th style="padding: 10px; text-align: left;"></th>
+            <th style="padding: 10px; text-align: left;">Week</th>
+            <th style="padding: 10px; text-align: left;">Month</th>
+            <th style="padding: 10px; text-align: left;">Year</th>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Current</td>
+            <td style="padding: 10px;">{{games_this_week}}</td>
+            <td style="padding: 10px;">{{games_this_month}}</td>
+            <td style="padding: 10px;">{{games_this_year}}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Previous</td>
+            <td style="padding: 10px;">{{games_last_week}}</td>
+            <td style="padding: 10px;">{{games_last_month}}</td>
+            <td style="padding: 10px;">{{games_last_year}}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Average</td>
+            <td style="padding: 10px;">{{weekly_avg}}</td>
+            <td style="padding: 10px;">{{monthly_avg}}</td>
+            <td style="padding: 10px;">{{yearly_avg}}</td>
+          </tr>
+        </table>
+
+        <h2>Most Played Games</h2>
+        <table style="border-collapse: separate; border-spacing: 20px 0;">
+          <tr>
+            <th style="padding: 10px; text-align: left;"></th>
+            <th style="padding: 10px; text-align: left;">Game</th>
+            <th style="padding: 10px; text-align: left;">Plays</th>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Current Week</td>
+            <td style="padding: 10px;">{{most_played_game_week}}</td>
+            <td style="padding: 10px;">{{week_play_count}}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Previous Week</td>
+            <td style="padding: 10px;">{{most_played_game_last_week}}</td>
+            <td style="padding: 10px;">{{last_week_play_count}}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Current Month</td>
+            <td style="padding: 10px;">{{most_played_game_month}}</td>
+            <td style="padding: 10px;">{{month_play_count}}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Previous Month</td>
+            <td style="padding: 10px;">{{most_played_game_last_month}}</td>
+            <td style="padding: 10px;">{{last_month_play_count}}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Current Year</td>
+            <td style="padding: 10px;">{{most_played_game_year}}</td>
+            <td style="padding: 10px;">{{year_play_count}}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px;">Previous Year</td>
+            <td style="padding: 10px;">{{most_played_game_last_year}}</td>
+            <td style="padding: 10px;">{{last_year_play_count}}</td>
+          </tr>
+        </table>
+        <button onclick="window.location.href='/games_overview'" style="position: absolute; top: 10px; right: 10px;">View Games Played Overview</button>
+
+        <h3>Top 5</h3>
+        <ul id="top_games">
+            {% for game, count in top_games %}
+                <li>{{ game }} - {{ count }} </li>
+            {% endfor %}
+        </ul>
+        <button onclick="window.location.href='/all_games'" style="position: absolute; bottom: 10px; right: 10px;">View All Games</button>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // Autocomplete for Add Game
+            $('#game_title').on('input', function() {
+                let searchTerm = $(this).val();
+                if (searchTerm.length > 1) {
+                    $.get('/search_games', { term: searchTerm }, function(data) {
+                        $('#add_suggestions').empty();
+                        let addedSuggestions = new Set();
+                        if (data.suggestions.length > 0) {
+                            data.suggestions.forEach(function(suggestion) {
+                                if (!addedSuggestions.has(suggestion)) {
+                                    $('#add_suggestions').append('<div class="autocomplete-suggestion">' + suggestion + '</div>');
+                                    addedSuggestions.add(suggestion);
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    $('#add_suggestions').empty();
+                }
+            });
+
+            // Handle suggestion click for Add Game
+            $(document).on('click', '#add_suggestions .autocomplete-suggestion', function() {
+                $('#game_title').val($(this).text());
+                $('#add_suggestions').empty();
+            });
+
+            // Autocomplete for Search Last Played
+            $('#search_title').on('input', function() {
+                let searchTerm = $(this).val();
+                if (searchTerm.length > 1) {
+                    $.get('/search_games', { term: searchTerm }, function(data) {
+                        $('#search_suggestions').empty();
+                        let addedSuggestions = new Set();
+                        if (data.suggestions.length > 0) {
+                            data.suggestions.forEach(function(suggestion) {
+                                if (!addedSuggestions.has(suggestion)) {
+                                    $('#search_suggestions').append('<div class="autocomplete-suggestion">' + suggestion + '</div>');
+                                    addedSuggestions.add(suggestion);
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    $('#search_suggestions').empty();
+                }
+            });
+
+            // Handle suggestion click for Search Last Played
+            $(document).on('click', '#search_suggestions .autocomplete-suggestion', function() {
+                $('#search_title').val($(this).text());
+                $('#search_suggestions').empty();
+            });
+
+            // Search Last Played Date and Notes
+            $('#search_button').click(function() {
+                let searchTitle = $('#search_title').val();
+                $.get('/search_last_played', { term: searchTitle }, function(data) {
+                    if (data.date_played) {
+			$('#search_result').html(`
+			    <table style="border-collapse: separate; border-spacing: 10px 0;">
+			        <tr>
+			            <th style="padding: 5px; text-align: left;"></th>
+			            <th style="padding: 5px; text-align: left;">Result</th>
+			            <th style="padding: 5px; text-align: left;">Level</th>
+			            <th style="padding: 5px; text-align: left;">My score</th>
+			            <th style="padding: 5px; text-align: left;">Bot score</th>
+			        </tr>
+			        <tr>
+			            <td style="padding: 5px;">${data.date_played}</td>
+			            <td style="padding: 5px;">${data.result}</td>
+			            <td style="padding: 5px;">${data.level}</td>
+			            <td style="padding: 5px;">${data.my_score}</td>
+			            <td style="padding: 5px;">${data.bot_score}</td>
+			        </tr>
+			    </table>
+			    <br>
+			    <table style="border-collapse: separate; border-spacing: 10px 0;">
+			        <tr>
+			            <th style="padding: 5px; text-align: left;"></th>
+			            <th style="padding: 5px; text-align: left;">Total</th>
+			            <th style="padding: 5px; text-align: left;">This week</th>
+			            <th style="padding: 5px; text-align: left;">This month</th>
+			            <th style="padding: 5px; text-align: left;">This year</th>
+			        </tr>
+			        <tr>
+			            <td style="padding: 1px;">Played</td>
+			            <td style="padding: 1px;">${data.total_times_played}</td>
+			            <td style="padding: 1px;">${data.played_this_week}</td>
+			            <td style="padding: 1px;">${data.played_this_month}</td>
+			            <td style="padding: 1px;">${data.played_this_year}</td>
+			        </tr>
+			    </table>
+			    <br>Notes: ${data.notes} 
+			    <br>Ranking: ${data.ranking}`);
+                    } else {
+                        $('#search_result').html("No record found for the specified game.");
+                    }
+                });
+            });
+
+            // Search Last non empty notes
+            $('#search_button_nonempty').click(function() {
+                let searchTitle_nonempty = $('#search_title').val();
+                $.get('/search_last_played', { term: searchTitle_nonempty }, function(data) {
+			$('#search_result_nonempty').html(`
+			    <table style="border-collapse: separate; border-spacing: 10px 0;">
+			        <tr>
+			            <th style="padding: 5px; text-align: left;"></th>
+			            <th style="padding: 5px; text-align: left;">Result</th>
+			            <th style="padding: 5px; text-align: left;">Level</th>
+			            <th style="padding: 5px; text-align: left;">My score</th>
+			            <th style="padding: 5px; text-align: left;">Bot score</th>
+			        </tr>
+			        <tr>
+			            <td style="padding: 5px;"></td>
+			            <td style="padding: 5px;">${data.result_nonempty}</td>
+			            <td style="padding: 5px;">${data.level_nonempty}</td>
+			            <td style="padding: 5px;">${data.my_score_nonempty}</td>
+			            <td style="padding: 5px;">${data.bot_score_nonempty}</td>
+			        </tr>
+			    </table>
+			    <br>Notes: ${data.notes_nonempty} 
+			`);
+
+                });
+            });
+        });
+
+        $('#search_last_note').on('input', function() {
+	    let searchTerm = $(this).val();
+	    if (searchTerm.length > 1) {
+	        $.get('/search_games', { term: searchTerm }, function(data) {
+	            $('#search_suggestions').empty();
+	            let addedSuggestions = new Set();
+	            if (data.suggestions.length > 0) {
+	                data.suggestions.forEach(function(suggestion) {
+	                    if (!addedSuggestions.has(suggestion)) {
+	                        $('#search_suggestions').append('<div class="autocomplete-suggestion">' + suggestion + '</div>');
+	                        addedSuggestions.add(suggestion);
+	                    }
+       		         });
+       		    }
+        	});
+    	    } else {
+        	   $('#search_suggestions').empty();
+    	    }
+        });
+        // Handle suggestion click for Search Last Played
+            $(document).on('click', '#search_suggestions .autocomplete-suggestion', function() {
+                $('#search_last_note').val($(this).text());
+                $('#search_suggestions').empty();
+            });
+
+        
+	function triggerSearch() {
+	    const searchTitle = document.getElementById("search_last_note").value; // Use search_last_note instead
+
+	    fetch(`/search_last_played?term=${encodeURIComponent(searchTitle)}`)
+	        .then(response => response.json())
+	        .then(data => {
+	            if (data.date_played) {
+	                document.getElementById("search_result").innerHTML = 
+	                    `Notes: ${data.notes} <br>Last Played: ${data.date_played}`;
+	                    document.getElementById("edit_note_button").style.display = "block";
+	                    document.getElementById("edit_note_button").setAttribute("data-game-title", searchTitle);
+	                    document.getElementById("edit_note_button").setAttribute("data-note-id", data.note_id); // Optional if you use IDs
+	            } else {
+	                document.getElementById("search_result").innerHTML = "No record found for the specified game.";
+	                document.getElementById("edit_note_button").style.display = "none";
+	            }
+	        });
+	}
+
+        function editNote() {
+            const gameTitle = document.getElementById("edit_note_button").getAttribute("data-game-title");
+            const currentNote = document.getElementById("search_result").innerText.split('Notes: ')[1]?.split('\n')[0] || '';
+
+            document.getElementById("edit_note_container").style.display = "block";
+            document.getElementById("edit_note_input").value = currentNote;
+        }
+
+        function saveNote() {
+            const gameTitle = document.getElementById("edit_note_button").getAttribute("data-game-title");
+            const updatedNote = document.getElementById("edit_note_input").value;
+
+            fetch('/update_note', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ game_title: gameTitle, note: updatedNote })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById("edit_note_container").style.display = "none";
+                    alert("Note updated successfully!");
+                } else {
+                    alert("Failed to update note.");
+                }
+            });
+        }
+    </script>
+</body>
+</html>
+

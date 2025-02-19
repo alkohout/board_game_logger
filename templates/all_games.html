@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>All Games</title>
+</head>
+<body>
+    <h1>All Games by Play Count</h1>
+    <button onclick="window.location.href='/'">Return to Home</button>
+<div class="form-container">
+    <h2>All Games</h2>
+    <table style="width:100%; border-collapse: collapse;">
+        <thead>
+            <tr>
+                <th style="border: 1px solid #ddd; padding: 8px;">Rank</th>
+                <th style="border: 1px solid #ddd; padding: 8px;">Game</th>
+                <th style="border: 1px solid #ddd; padding: 8px;">Play Count</th>
+                <th style="border: 1px solid #ddd; padding: 8px;">Latest Note</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for game, rank, count, note in all_games %}
+            <tr>
+                <td style="border: 1px solid #ddd; padding: 8px;">{{ rank }}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">{{ game }}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">{{ count }}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">{{ note }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+</body>
+</html>
+
+

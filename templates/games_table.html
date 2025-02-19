@@ -1,0 +1,19 @@
+
+{% macro render_games_table(games) %}
+    {% if games %}
+    <table>
+        <tr>
+            <th>Game Title</th>
+            <th>Play Count</th>
+        </tr>
+        {% for game_title, play_count in games %}
+        <tr>
+            <td>{{ game_title }}</td>
+            <td>{{ play_count }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p>No games played in this period.</p>
+    {% endif %}
+{% endmacro %}
