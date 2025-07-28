@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Log a location in sleeping gods</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            background-image: url("{{ url_for('static', filename='SG.webp') }}");
+            background-size: cover;
+            background-attachment: scroll;
+            background-repeat: no-repeat;
+            background-position: center center;
+            color: #FFFFFF;
+        }
+        h1, label {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+        }
+        .form-container {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 600px;
+            margin: 20px auto;
+            position: relative;
+            overflow-x: auto;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+	table {
+	    width: 100%; /* Ensures the table fits within the container */
+	    max-width: 100%; /* Prevents the table from exceeding the container width */
+	    border-collapse: collapse; /* Ensures borders are collapsed */
+	}
+	input[type="number"] {
+	    width: 40px; /* Adjust as needed */
+	}
+	.form-container th,
+	.form-container td {
+	    border-bottom: 1px solid rgba(255, 255, 255, 0.1); /* Light horizontal line */
+	}
+        .no-lines {
+            border-collapse: collapse;
+        }
+        .no-lines td {
+            border: none;
+        }
+        .no-lines th {
+            border: none;
+        }
+        .defeat-counter-inline {
+            display: flex;
+            align-items: center;
+	    gap: 15px;
+        }
+
+        .counter-button {
+            background-color: #c45f5f;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .counter-button:hover {
+            background-color: #cc0000;
+        }
+
+        .reset-button:hover {
+            background-color: #444;
+        }
+
+        .reset-button{
+            padding: 5px 10px;
+            background-color: #666;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+	}
+
+	#reset_visited:hover {
+	    background-color: #cc0000;
+	}
+
+    </style>
+
+    <link rel="preload" href="{{ url_for('static', filename='SG.webp') }}" as="image">
+
+</head>
+<body>
+    <h1></h1>
+    <button onclick="window.location.href='/'">Back to Home</button>
+
+    <div class="form-container">
+        <h1>Location Log</h1>
+        <form action="/sleeping_gods" method="post">
+            <label for="location">Location:</label>
+            <input type="number" id="location" name="location" >
+            <label for="part">&emsp;Part:</label>
+            <input type="text" id="part" name="part" rows="1" cols="10" placeholder="Add part i.e. ABC here...">
+            <br><br>
+            <label for="visited">Visited:</label>
+	    <input type="checkbox" id="visited" name="visited" value="1">
+	    <button type="button" id="reset_visited" class="reset-button">Reset</button>
+
+	    <h2>Required </h2>
+            <label for="required_keyword">Keyword:</label>
+            <input type="text" id="required_keyword" name="required_keyword" placeholder="Add required keyword here...">
+            <br><br>
+	    <table class="no-lines">
+	    <tr>
+	      <td>Combat Level</td>
+              <td><input type="number" id="combat_level" name="combat_level"></td>
+              <td>Challenge</td>
+                <td>
+                    <select id="challenge" name="challenge">
+                        <option value="">Select Challenge</option>
+                        <option value="CUNNING">CUNNING</option>
+                        <option value="CRAFT">CRAFT</option>
+                        <option value="PERCEPTION">PERCEPTION</option>
+                        <option value="STRENGTH">STRENGTH</option>
+                        <option value="SAVVY">SAVVY</option>
+                    </select>
+                </td>
+              <td>Challenge Level</td>
+              <td><input type="number" id="challenge_level" name="challenge_level" ></td>
+	    </tr>
+	    <tr style="height: 20px;">
+	        <td colspan="2"></td> <!-- Empty row with height for spacing -->
+	    </tr>
+	    <tr>
+	      <td>Coins</td>
+              <td><input type="number" id="req_coins" name="req_coins" ></td>
+	      <td>Meat</td>
+              <td><input type="number" id="req_meat" name="req_meat" ></td>
+	      <td>Veg</td>
+              <td><input type="number" id="req_veg" name="req_veg" ></td>
+	    </tr>
+	    <tr>
+	      <td>Grain</td>
+              <td><input type="number" id="req_grain" name="req_grain" ></td>
+	      <td>Materials</td>
+              <td><input type="number" id="req_wood" name="req_wood" ></td>
+	      <td>Artifacts</td>
+              <td><input type="number" id="req_artifacts" name="req_artifacts" ></td>
+	    </tr>
+	    </table>
+
+	    <h2>Gained </h2>
+            <label for="gained_keyword">Keyword:</label>
+            <input type="text" id="gained_keyword" name="gained_keyword" placeholder="Add gained keyword here...">
+            <br><br>
+	    <table class="no-lines">		
+	    <tr>
+	      <td>XP</td>
+              <td><input type="number" id="gain_xp" name="gain_xp" ></td>
+	      <td>Totem</td>
+              <td><input type="text" id="gain_totem" name="gain_totem" ></td>
+	      <td>Adventure</td>
+              <td><input type="number" id="gain_adventure" name="gain_adventure" ></td>
+	    </tr>
+	    <tr style="height: 20px;">
+	        <td colspan="2"></td> <!-- Empty row with height for spacing -->
+	    </tr>
+	    <tr>
+	      <td>Coins</td>
+              <td><input type="number" id="gain_coins" name="gain_coins" ></td>
+	      <td>Meat</td>
+              <td><input type="number" id="gain_meat" name="gain_meat" ></td>
+	      <td>Veg</td>
+              <td><input type="number" id="gain_veg" name="gain_veg" ></td>
+	    </tr>
+	    <tr>
+	      <td>Grain</td>
+              <td><input type="number" id="gain_grain" name="gain_grain" ></td>
+	      <td>Materials</td>
+              <td><input type="number" id="gain_wood" name="gain_wood" ></td>
+	      <td>Artifacts</td>
+              <td><input type="number" id="gain_artifacts" name="gain_artifacts" ></td>
+	    </tr>
+	    <tr style="height: 20px;">
+	        <td colspan="2"></td> <!-- Empty row with height for spacing -->
+	    </tr>
+	    <tr>
+	      <td>Ship Damage</td>
+              <td><input type="number" id="gain_ship_damage" name="gain_ship_damage" ></td>
+	      <td>Ship Repair</td>
+              <td><input type="number" id="gain_ship_repair" name="gain_ship_repair" ></td>
+	    </tr>
+	    <tr>
+	      <td>Crew Damage</td>
+              <td><input type="number" id="gain_crew_damage" name="gain_crew_damage" ></td>
+	      <td>Crew Health</td>
+              <td><input type="number" id="gain_crew_health" name="gain_crew_health" ></td>
+	    </tr>
+	    <tr style="height: 20px;">
+	        <td colspan="2"></td> <!-- Empty row with height for spacing -->
+	    </tr>
+	    <tr>
+	      <td>Low Morale</td>
+              <td><input type="number" id="gain_low_morale" name="gain_low_morale" ></td>
+	      <td>Frightened</td>
+              <td><input type="number" id="gain_fright" name="gain_fright" ></td>
+	      <td>Venom</td>
+              <td><input type="number" id="gain_venom" name="gain_venom" ></td>
+	    </tr>
+	    <tr>
+	      <td>Weakened</td>
+              <td><input type="number" id="gain_weakness" name="gain_weakness" ></td>
+	      <td>Madness</td>
+              <td><input type="number" id="gain_madness" name="gain_madness" ></td>
+	    </tr>
+	    </table>		
+	    <h2>Removed </h2>
+	    <table class="no-lines">		
+	    <tr>
+	      <td>Low Morale</td>
+              <td><input type="number" id="remove_low_morale" name="remove_low_morale" ></td>
+	      <td>Frightened</td>
+              <td><input type="number" id="remove_fright" name="remove_fright" ></td>
+	      <td>Venom</td>
+              <td><input type="number" id="remove_venom" name="remove_venom" ></td>
+	    </tr>
+	    <tr>
+	      <td>Weakened</td>
+              <td><input type="number" id="remove_weakness" name="remove_weakness" ></td>
+	      <td>Madness</td>
+              <td><input type="number" id="remove_madness" name="remove_madness" ></td>
+	    </tr>
+	    </table>		
+
+            <br><br>
+            <label for="notes">Notes:</label>
+            <textarea id="notes" name="notes" placeholder="Add any notes here..."></textarea>
+            <br><br>
+	    <div class="loc" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 30px;">
+	        <div> <button type="submit">Log</button> </div>
+	        <div class="defeat-counter-inline">
+	            <span id="defeatCount"> 0 </span>
+	            <button class="counter-button" onclick="incrementCounter()">Defeat</button>
+	            <button class="reset-button" onclick="resetCounter()">Reset</button>
+	        </div>
+	    </div>
+        </form>
+    </div>
+
+    <div class="form-container">
+        <h2>Search Location</h2>
+        <label for="search_location">Location:</label>
+        <input type="number" id="search_location" name="search_location" placeholder="Enter location" >
+        <button id="search_button">Search</button>
+        <p id="search_result"></p>
+    </div>
+
+    <div class="form-container">
+        <h2>Search Keyword</h2>
+        <label for="search_keyword">Keyword:</label>
+        <input type="text" id="search_keyword" name="search_keyword" placeholder="Enter keyword" >
+        <button id="search_button_keyword">Search</button>
+        <p id="search_result_keyword"></p>
+    </div>
+
+    <div class="form-container">
+        <h2>Search Notes</h2>
+        <label for="search_notes">Notes:</label>
+        <input type="text" id="search_notes" name="search_notes" placeholder="Enter a word or phrase to search" >
+        <button id="search_button_notes">Search</button>
+        <p id="search_result_notes"></p>
+    </div>
+
+    <div class="form-container">
+        <h2>Token Checklist</h2>
+        <button onclick="window.location.href='/sleeping_gods_totems'" id="token_checklist">Enter</button>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+
+        // Add reset visited functionality
+        $('#reset_visited').click(function() {
+            if (confirm('Are you sure you want to reset all visited locations to "No"?')) {
+                $.ajax({
+                    url: '/reset_visited_sleeping_gods',
+                    type: 'POST',
+                    success: function(response) {
+                        if (response.success) {
+                            alert('Successfully reset all visited locations');
+                            // Refresh the page or update the display
+                            location.reload();
+                        } else {
+                            alert('Error resetting visited locations');
+                        }
+                    },
+                    error: function() {
+                        alert('Error connecting to server');
+                    }
+                });
+            }
+        });
+ 
+	// Search Location
+	$('#search_button').click(function() {
+	    let searchLocation = $('#search_location').val();
+	    $.get('/search_sleeping_gods_location', { term: searchLocation }, function(data) {
+	        if (data.length > 0) {
+                    let tableHtml = '<table id="searchOutput">';   
+            
+	            // Header row with locations
+	                tableHtml += '<tr><th></th>'; // Empty corner cell
+	                data.forEach(entry => {
+	                    tableHtml += `
+                                <th style="text-align:center;">
+					Location ${entry.location}<br>${entry.part || ''}
+					<br>
+					<button class="deleteRow" data-id="${entry.id}">✖</button>
+				</th> `;
+	                });
+	                tableHtml += '</tr>';
+	    
+	                // Fixed rows for each attribute
+	                const rows = [
+ 			    { label: '<h2>Required</h2>'},
+	                    { label: 'Keyword', field: 'required_keyword' },
+	                    { label: 'Visited', field: 'visited' },
+	                    { label: 'Combat Level', field: 'combat_level' },
+	                    { label: 'Challenge', field: 'challenge' },
+	                    { label: 'Challenge Level', field: 'challenge_level' },
+	                    { label: 'Coins', field: 'req_coins' },
+	                    { label: 'Meat', field: 'req_meat' },
+	                    { label: 'Veg', field: 'req_veg' },
+	                    { label: 'Grain', field: 'req_grain' },
+	                    { label: 'Materials', field: 'req_wood' },
+	                    { label: 'Artifacts', field: 'req_artifacts' },
+ 			    { label: '<h2>Gained</h2>'},
+	                    { label: 'Keyword', field: 'gained_keyword' },
+	                    { label: 'Coins', field: 'gain_coins' },
+	                    { label: 'Meat', field: 'gain_meat' },
+	                    { label: 'Veg', field: 'gain_veg' },
+	                    { label: 'Grain', field: 'gain_grain' },
+	                    { label: 'Materials', field: 'gain_wood' },
+	                    { label: 'Artifacts', field: 'gain_artifacts' },
+	                    { label: 'XP', field: 'gain_xp' },
+	                    { label: 'Totem', field: 'gain_totem' },
+	                    { label: 'Adventure', field: 'gain_adventure' },
+	                    { label: 'Ship Damage', field: 'gain_ship_damage' },
+	                    { label: 'Ship Repair', field: 'gain_ship_repair' },
+	                    { label: 'Crew Damage', field: 'gain_crew_damage' },
+	                    { label: 'Crew Health', field: 'gain_crew_health' },
+	                    { label: 'Low Morale', field: 'gain_low_morale' },
+	                    { label: 'Frightened', field: 'gain_fright' },
+	                    { label: 'Venom', field: 'gain_venom' },
+	                    { label: 'Weakened', field: 'gain_weakness' },
+	                    { label: 'Madness', field: 'gain_madness' },
+ 			    { label: '<h2>Removed</h2>'},
+	                    { label: 'Low Morale', field: 'remove_low_morale' },
+	                    { label: 'Frightened', field: 'remove_fright' },
+	                    { label: 'Venom', field: 'remove_venom' },
+	                    { label: 'Weakened', field: 'remove_weakness' },
+	                    { label: 'Madness', field: 'remove_madness' },
+			    { label: '<h2>Notes</h2>' }, 
+			    { label: 'Notes', field: 'notes' }   
+	                ];
+
+			// Create each row
+			rows.forEach(row => {
+			    // Skip header rows (containing h2 tags)
+			    if (row.label.includes('<h2>')) {
+			        tableHtml += `<tr><td>${row.label}</td>`;
+			        data.forEach(() => {
+			            tableHtml += '<td></td>';
+			        });
+			        tableHtml += '</tr>';
+			        return;
+			    }
+
+			    // Only create row if it has non-empty values
+			    if (row.field && hasNonEmptyValues(data, row.field)) {
+			        tableHtml += `<tr><td>${row.label}</td>`;
+			        data.forEach(entry => {
+			            let value = entry[row.field];
+			            // Special handling for boolean values
+			            if (row.field === 'visited' || row.field === 'combat') {
+			                value = value ? 'Yes' : 'No';
+			            }
+			            // Don't show 0 values for numeric fields
+			            if (typeof value === 'number' && value === 0) {
+			                value = '';
+			            }
+			            tableHtml += `<td style="text-align: center;">${value || ''}</td>`;
+			        });
+			        tableHtml += '</tr>';
+			    }
+			});
+
+	                tableHtml += '</table>';
+	                $('#search_result').html(tableHtml);
+	            } else {
+	                $('#search_result').html('<p>No results found.</p>');
+	            }
+	        });
+	    });
+
+        // Search keyword
+        $('#search_button_keyword').click(function() {
+            let searchKeyword = $('#search_keyword').val();
+            $.get('/search_sleeping_gods_keyword', { term: searchKeyword }, function(data) {
+	        if (data.length > 0) {
+                    let tableHtml = '<table id="searchOutput">';   
+            
+	            // Header row with locations
+	                tableHtml += '<tr><th></th>'; // Empty corner cell
+	                data.forEach(entry => {
+	                    tableHtml += `
+                                <th style="text-align:center;">
+					Location ${entry.location}<br>${entry.part || ''}
+					<br>
+					<button class="deleteRow" data-id="${entry.id}">✖</button>
+				</th> `;
+	                });
+	                tableHtml += '</tr>';
+	    
+	                // Fixed rows for each attribute
+	                const rows = [
+ 			    { label: '<h2>Required</h2>'},
+	                    { label: 'Keyword', field: 'required_keyword' },
+	                    { label: 'Visited', field: 'visited' },
+	                    { label: 'Combat Level', field: 'combat_level' },
+	                    { label: 'Challenge', field: 'challenge' },
+	                    { label: 'Challenge Level', field: 'challenge_level' },
+	                    { label: 'Coins', field: 'req_coins' },
+	                    { label: 'Meat', field: 'req_meat' },
+	                    { label: 'Veg', field: 'req_veg' },
+	                    { label: 'Grain', field: 'req_grain' },
+	                    { label: 'Materials', field: 'req_wood' },
+	                    { label: 'Artifacts', field: 'req_artifacts' },
+ 			    { label: '<h2>Gained</h2>'},
+	                    { label: 'Keyword', field: 'gained_keyword' },
+	                    { label: 'Coins', field: 'gain_coins' },
+	                    { label: 'Meat', field: 'gain_meat' },
+	                    { label: 'Veg', field: 'gain_veg' },
+	                    { label: 'Grain', field: 'gain_grain' },
+	                    { label: 'Materials', field: 'gain_wood' },
+	                    { label: 'Artifacts', field: 'gain_artifacts' },
+	                    { label: 'XP', field: 'gain_xp' },
+	                    { label: 'Totem', field: 'gain_totem' },
+	                    { label: 'Adventure', field: 'gain_adventure' },
+	                    { label: 'Ship Damage', field: 'gain_ship_damage' },
+	                    { label: 'Ship Repair', field: 'gain_ship_repair' },
+	                    { label: 'Crew Damage', field: 'gain_crew_damage' },
+	                    { label: 'Crew Health', field: 'gain_crew_health' },
+	                    { label: 'Low Morale', field: 'gain_low_morale' },
+	                    { label: 'Frightened', field: 'gain_fright' },
+	                    { label: 'Venom', field: 'gain_venom' },
+	                    { label: 'Weakened', field: 'gain_weakness' },
+	                    { label: 'Madness', field: 'gain_madness' },
+ 			    { label: '<h2>Removed</h2>'},
+	                    { label: 'Low Morale', field: 'remove_low_morale' },
+	                    { label: 'Frightened', field: 'remove_fright' },
+	                    { label: 'Venom', field: 'remove_venom' },
+	                    { label: 'Weakened', field: 'remove_weakness' },
+	                    { label: 'Madness', field: 'remove_madness' },
+			    { label: '<h2>Notes</h2>' }, 
+			    { label: 'Notes', field: 'notes' }   
+	                ];
+
+			// Create each row
+			rows.forEach(row => {
+			    // Skip header rows (containing h2 tags)
+			    if (row.label.includes('<h2>')) {
+			        tableHtml += `<tr><td>${row.label}</td>`;
+			        data.forEach(() => {
+			            tableHtml += '<td></td>';
+			        });
+			        tableHtml += '</tr>';
+			        return;
+			    }
+
+			    // Only create row if it has non-empty values
+			    if (row.field && hasNonEmptyValues(data, row.field)) {
+			        tableHtml += `<tr><td>${row.label}</td>`;
+			        data.forEach(entry => {
+			            let value = entry[row.field];
+			            // Special handling for boolean values
+			            if (row.field === 'visited' || row.field === 'combat') {
+			                value = value ? 'Yes' : 'No';
+			            }
+			            // Don't show 0 values for numeric fields
+			            if (typeof value === 'number' && value === 0) {
+			                value = '';
+			            }
+			            tableHtml += `<td style="text-align: center;">${value || ''}</td>`;
+			        });
+			        tableHtml += '</tr>';
+			    }
+			});
+
+	                tableHtml += '</table>';
+	                $('#search_result_keyword').html(tableHtml);
+	            } else {
+	                $('#search_result_keyword').html('<p>No results found.</p>');
+	            }
+	        });
+	    });
+
+        // Search notes
+        $('#search_button_notes').click(function() {
+                let searchNotes = $('#search_notes').val();
+                $.get('/search_sleeping_gods_notes', { term: searchNotes }, function(data) {
+	        if (data.length > 0) {
+                    let tableHtml = '<table id="searchOutput">';   
+            
+	            // Header row with locations
+	                tableHtml += '<tr><th></th>'; // Empty corner cell
+	                data.forEach(entry => {
+	                    tableHtml += `<th style="text-align: center;">Location ${entry.location}<br>${entry.part || ''}</th>`;
+	                });
+	                tableHtml += '</tr>';
+	    
+	                // Fixed rows for each attribute
+	                const rows = [
+ 			    { label: '<h2>Required</h2>'},
+	                    { label: 'Keyword', field: 'required_keyword' },
+	                    { label: 'Visited', field: 'visited' },
+	                    { label: 'Combat Level', field: 'combat_level' },
+	                    { label: 'Challenge', field: 'challenge' },
+	                    { label: 'Challenge Level', field: 'challenge_level' },
+	                    { label: 'Coins', field: 'req_coins' },
+	                    { label: 'Meat', field: 'req_meat' },
+	                    { label: 'Veg', field: 'req_veg' },
+	                    { label: 'Grain', field: 'req_grain' },
+	                    { label: 'Materials', field: 'req_wood' },
+	                    { label: 'Artifacts', field: 'req_artifacts' },
+ 			    { label: '<h2>Gained</h2>'},
+	                    { label: 'Keyword', field: 'gained_keyword' },
+	                    { label: 'Coins', field: 'gain_coins' },
+	                    { label: 'Meat', field: 'gain_meat' },
+	                    { label: 'Veg', field: 'gain_veg' },
+	                    { label: 'Grain', field: 'gain_grain' },
+	                    { label: 'Materials', field: 'gain_wood' },
+	                    { label: 'Artifacts', field: 'gain_artifacts' },
+	                    { label: 'XP', field: 'gain_xp' },
+	                    { label: 'Totem', field: 'gain_totem' },
+	                    { label: 'Adventure', field: 'gain_adventure' },
+	                    { label: 'Ship Damage', field: 'gain_ship_damage' },
+	                    { label: 'Ship Repair', field: 'gain_ship_repair' },
+	                    { label: 'Crew Damage', field: 'gain_crew_damage' },
+	                    { label: 'Crew Health', field: 'gain_crew_health' },
+	                    { label: 'Low Morale', field: 'gain_low_morale' },
+	                    { label: 'Frightened', field: 'gain_fright' },
+	                    { label: 'Venom', field: 'gain_venom' },
+	                    { label: 'Weakened', field: 'gain_weakness' },
+	                    { label: 'Madness', field: 'gain_madness' },
+ 			    { label: '<h2>Removed</h2>'},
+	                    { label: 'Low Morale', field: 'remove_low_morale' },
+	                    { label: 'Frightened', field: 'remove_fright' },
+	                    { label: 'Venom', field: 'remove_venom' },
+	                    { label: 'Weakened', field: 'remove_weakness' },
+	                    { label: 'Madness', field: 'remove_madness' },
+			    { label: '<h2>Notes</h2>' }, 
+			    { label: 'Notes', field: 'notes' }   
+	                ];
+
+			// Create each row
+			rows.forEach(row => {
+			    // Skip header rows (containing h2 tags)
+			    if (row.label.includes('<h2>')) {
+			        tableHtml += `<tr><td>${row.label}</td>`;
+			        data.forEach(() => {
+			            tableHtml += '<td></td>';
+			        });
+			        tableHtml += '</tr>';
+			        return;
+			    }
+
+			    // Only create row if it has non-empty values
+			    if (row.field && hasNonEmptyValues(data, row.field)) {
+			        tableHtml += `<tr><td>${row.label}</td>`;
+			        data.forEach(entry => {
+			            let value = entry[row.field];
+			            // Special handling for boolean values
+			            if (row.field === 'visited' || row.field === 'combat') {
+			                value = value ? 'Yes' : 'No';
+			            }
+			            // Don't show 0 values for numeric fields
+			            if (typeof value === 'number' && value === 0) {
+			                value = '';
+			            }
+			            tableHtml += `<td style="text-align: center;">${value || ''}</td>`;
+			        });
+			        tableHtml += '</tr>';
+			    }
+			});
+
+	                tableHtml += '</table>';
+	                $('#search_result_notes').html(tableHtml);
+	            } else {
+	                $('#search_result_notes').html('<p>No results found.</p>');
+	            }
+	        });
+
+	    });
+
+        $(document).on('click', '.deleteRow', function () { const rowId = $(this).data('id');
+            if (!confirm('Delete this entry permanently?')) return;
+
+                $.ajax({
+                    url: '/delete_sleeping_gods_row',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ id: rowId }),
+                    success: (resp) => {
+                        if (resp.success) {
+                            // remove the whole column from the table
+                            const colIndex = $(this).closest('th').index();
+			    $('#searchOutput tr').each(function () {
+				$(this).children().eq(colIndex).remove();
+			    });
+                        } else {
+                            alert('Error: ' + (resp.error || 'unknown'));
+                        }
+                    },
+                    error: () => alert('Server error while deleting')
+                });
+        });
+
+        // Function to convert input to uppercase
+        document.getElementById('required_keyword').addEventListener('input', function() {
+            this.value = this.value.toUpperCase();
+        });
+        document.getElementById('gained_keyword').addEventListener('input', function() {
+            this.value = this.value.toUpperCase();
+        });
+        document.getElementById('part').addEventListener('input', function() {
+            this.value = this.value.toUpperCase();
+        });
+        document.getElementById('search_keyword').addEventListener('input', function() {
+            this.value = this.value.toUpperCase();
+        });
+
+        }); // Closes document ready
+
+        let defeats = localStorage.getItem('defeats') || 0;
+        document.getElementById('defeatCount').textContent = defeats;
+
+        function incrementCounter() {
+            defeats++;
+            localStorage.setItem('defeats', defeats);
+            document.getElementById('defeatCount').textContent = defeats;
+        }
+
+        function resetCounter() {
+            defeats = 0;
+            localStorage.setItem('defeats', defeats);
+            document.getElementById('defeatCount').textContent = defeats;
+        }
+	function hasNonEmptyValues(data, field) {
+	    return data.some(entry => {
+	        let value = entry[field];
+	        if (typeof value === 'number') {
+	            return value !== 0;
+	        }
+	        return value && value.toString().trim() !== '';
+	    });
+	}
+
+    </script>
+</body>
+</html>

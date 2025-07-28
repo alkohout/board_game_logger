@@ -1,0 +1,277 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log a location in sleeping gods</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            background-image: url("{{ url_for('static', filename='SG.webp') }}");
+            background-size: cover;
+            background-attachment: fixed;
+            background-attachment: scroll;
+            background-repeat: no-repeat;
+            background-position: center center;
+            color: #FFFFFF;
+        }
+        h1, label {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+        }
+        .form-container {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 750px;
+            margin: 20px auto;
+            position: relative;
+            overflow-x: auto;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+	table {
+	    width: 100%; /* Ensures the table fits within the container */
+	    border-collapse: collapse; /* Ensures borders are collapsed */
+	}
+        th, td {
+            padding: 6px;
+            text-align: left;
+        }
+        td input[type="checkbox"] {
+            margin-right: 5px; /* Add space between checkbox and label */
+        }
+    </style>
+</head>
+<body>
+    <button onclick="window.history.back()">Back to Sleeping Gods Log</button>
+
+    <div class="form-container">
+        <h2>Totems</h2>
+        <table>
+            <tbody>
+                {% for row in range(25) %}
+                    <tr>
+                        {% for col in range(3) %}
+                            <td>
+                                {% set index = row * 3 + col %}
+                                {% if totems[index] %}
+                                    <input type="checkbox" id="totem-{{ totems[index].id }}" data-totem-id="{{ totems[index].id }}"
+                                           {{ 'checked' if totems[index].found else '' }}>
+                                    <label for="totem-{{ totems[index].id }}">{{ totems[index].totem }}</label>
+                                {% else %}
+                                    <span>N/A</span>
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="form-container">
+        <h2>Endings</h2>
+        <table>
+            <tbody>
+                {% for row in range(5) %}
+                    <tr>
+                        {% for col in range(3) %}
+                            <td>
+                                {% set index = 83 + row * 3 + col %}
+                                {% if totems[index] %}
+                                    <input type="checkbox" id="totem-{{ totems[index].id }}" data-totem-id="{{ totems[index].id }}"
+                                           {{ 'checked' if totems[index].found else '' }}>
+                                    <label for="totem-{{ totems[index].id }}">{{ totems[index].totem }}</label>
+                                {% else %}
+                                    <span></span>
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+
+    <div class="form-container">
+        <h2>Unlocked Cards</h2>
+	<p> You've uncovered <span id="totem-count">0</span> totems and endings. Include the ticked Quests below for all future campaigns.</p>
+        <table>
+            <tbody>
+                {% for row in range(3) %}
+                    <tr>
+                        {% for col in range(3) %}
+                            <td>
+                                {% set index = 75 + row * 3 + col %}
+                                {% if totems[index] and index < 83 %}
+                                    <input type="checkbox" id="totem-{{ totems[index].id }}" data-totem-id="{{ totems[index].id }}"
+                                           {{ 'checked' if totems[index].found else '' }}>
+                                    <label for="totem-{{ totems[index].id }}">{{ totems[index].totem }}</label>
+                                {% else %}
+                                    <span></span>
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+	$(document).ready(function() {
+	    $('input[type="checkbox"]').change(async function() {
+       		 const totemId = parseInt($(this).data('totemId'), 10); // Parse to integer
+       		 const isFound = $(this).is(':checked');
+
+       		 if (isNaN(totemId)) {
+       		     console.error("Invalid totemId:", $(this).data('totemId'));
+       		     alert("An error occurred. Please refresh the page.");
+       		     return; // Stop execution if totemId is not a number
+       		 }
+
+       		 try {
+       		     const response = await fetch('/sleeping_gods_totems_update', {
+       		         method: 'POST',
+       		         headers: { 'Content-Type': 'application/json' },
+       		         body: JSON.stringify({ totemId: totemId, isFound: isFound })
+       		     });
+	
+       		     if (!response.ok) {
+       		         const errorData = await response.json();
+       		         throw new Error(`HTTP error! status: ${response.status} - ${errorData.message || response.statusText}`);
+       		     }
+       		 } catch (error) {
+       		     console.error('Error updating totem status:', error);
+       		     alert(`An error occurred: ${error.message}`);
+       		     $(this).prop('checked', !isFound); 
+       		 }
+	    });
+	});
+	$(function(){
+	function getFilteredTotemCount() {
+	  return $('input[type="checkbox"]:checked')
+	    .filter(function() {
+	      // grab the label text right after the checkbox
+	      const labelText = $(this).next('label').text();
+	      // return true if it does NOT contain "Quest"
+	      return !labelText.includes('Quest');
+	    })
+	    .length;
+	}
+	function refreshCount() {
+	  const c = getFilteredTotemCount();
+	  $('#totem-count').text(c);
+	}
+
+	$(refreshCount);
+	$('input[type="checkbox"]').on('change', function(){
+	  refreshCount();
+	  checkTotemCountAndCongratulate(); 
+	});
+
+	function checkTotemCountAndCongratulate() {
+	        const checkedCount = getFilteredTotemCount();
+	        const targetCount22 = 22;
+	        const targetCount18 = 18;
+	        const targetCount15 = 15;
+	        const targetCount13 = 13;
+	        const targetCount11 = 11;
+	        const targetCount9 = 9;
+	        const targetCount7 = 7;
+	        const targetCount4 = 4;
+	        if (checkedCount == targetCount22) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="84"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quest 173.');
+	            }
+	        } else if (checkedCount == targetCount18) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="81"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quests 178-180.');
+	            }
+	        } else if (checkedCount == targetCount15) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="86"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quests 176-177.');
+	            }
+	        } else if (checkedCount == targetCount13) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="83"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quest 175.');
+	            }
+	        } else if (checkedCount == targetCount11) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="80"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quest 174.');
+	            }
+	        } else if (checkedCount == targetCount9) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="85"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quest 168.');
+	            }
+	        } else if (checkedCount == targetCount7) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="82"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quests 169-170.');
+	            }
+	        } else if (checkedCount == targetCount4) {
+	            const $totem_check = $('input[type="checkbox"][data-totem-id="79"]');
+	            if (!$totem_check.is(':checked')) {
+	                // Check the checkbox
+	                $totem_check.prop('checked', true);
+	                // Trigger the change event to run your existing update logic
+	                $totem_check.trigger('change');
+	            	alert('Congratulations! You have ' + checkedCount + ' totems and endings and have unlocked Quests 171-172.');
+	            }
+		}
+	    }
+
+	    // Run the check on every checkbox change
+	    $('input[type="checkbox"]').change(function() {
+	        checkTotemCountAndCongratulate();
+	    });
+
+	    // Check on page load in case some are pre-checked
+	    checkTotemCountAndCongratulate();
+	});
+    </script>
+</body>
+</html>

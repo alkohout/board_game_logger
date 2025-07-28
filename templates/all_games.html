@@ -4,35 +4,78 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>All Games</title>
+    <style>
+        .form-container table {
+            width: 100%;
+            border-collapse: collapse;
+            border-spacing: 0; /* Added for better cell spacing consistency */
+        }
+
+        .form-container th, .form-container td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left; /* Align text to the left */
+        }
+
+        .form-container th {
+            cursor: pointer; /* Indicate that headers are clickable */
+        }
+    </style>
 </head>
 <body>
     <h1>All Games by Play Count</h1>
     <button onclick="window.location.href='/'">Return to Home</button>
-<div class="form-container">
-    <h2>All Games</h2>
-    <table style="width:100%; border-collapse: collapse;">
-        <thead>
-            <tr>
-                <th style="border: 1px solid #ddd; padding: 8px;">Rank</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Game</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Play Count</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Latest Note</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for game, rank, count, note in all_games %}
-            <tr>
-                <td style="border: 1px solid #ddd; padding: 8px;">{{ rank }}</td>
-                <td style="border: 1px solid #ddd; padding: 8px;">{{ game }}</td>
-                <td style="border: 1px solid #ddd; padding: 8px;">{{ count }}</td>
-                <td style="border: 1px solid #ddd; padding: 8px;">{{ note }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+    <div class="form-container">
+        <h2>All Games</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th data-sort="rank">Rank</th>
+                    <th data-sort="game">Game</th>
+                    <th data-sort="count">Play Count</th>
+                    <th data-sort="note">Latest Note</th>
+                </tr>
+            </thead>
+            <tbody id="gameTableBody">
+                {% for game, rank, count, note in all_games %}
+                <tr data-rank="{{rank}}" data-game="{{game}}" data-count="{{count}}" data-note="{{note}}">
+                    <td>{{ rank }}</td>
+                    <td>{{ game }}</td>
+                    <td>{{ count }}</td>
+                    <td>{{ note }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <script>
+        const table = document.querySelector('.form-container table');
+        const tbody = document.getElementById('gameTableBody');
+        const headers = table.querySelectorAll('th');
 
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortColumn = header.dataset.sort;
+                const sortDirection = header.dataset.direction === 'asc' ? 'desc' : 'asc';
+
+                header.dataset.direction = sortDirection;
+
+                const sortedRows = Array.from(tbody.querySelectorAll('tr')).sort((a, b) => {
+                    const aValue = a.dataset[sortColumn];
+                    const bValue = b.dataset[sortColumn];
+
+                    // Handle numerical and string sorting
+                    if (isNaN(aValue) || isNaN(bValue)) {
+                        return sortDirection === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+                    } else {
+                        return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+                    }
+                });
+
+                tbody.innerHTML = ''; //clear table
+                sortedRows.forEach(row => tbody.appendChild(row));
+            });
+        });
+    </script>
 </body>
 </html>
-
-

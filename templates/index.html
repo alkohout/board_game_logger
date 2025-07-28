@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Log a Game</title>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
@@ -54,6 +54,39 @@
         button:hover {
             background-color: #45a049;
         }
+
+	/* Add this to your existing CSS */
+	input[type="text"], 
+	input[type="date"], 
+	textarea {
+	    width: 100%;
+	    max-width: 100%;
+	    box-sizing: border-box;
+	    padding: 8px;
+	    margin-bottom: 10px;
+	    border: none;
+	    border-radius: 4px;
+	}
+	
+	/* Remove the cols attribute from textareas in your HTML or override it */
+	textarea {
+	    resize: vertical;
+	}
+	
+	/* Ensure the autocomplete suggestions don't overflow */
+	.autocomplete-suggestions {
+	    width: 100%;
+	    box-sizing: border-box;
+	}
+
+	/* Media query for small screens */
+	@media screen and (max-width: 480px) {
+	    .form-container {
+	        padding: 15px;
+	        margin: 10px;
+	        width: calc(100% - 20px);
+	    }
+	}
     </style>
 </head>
 <link rel="preload" href="{{ url_for('static', filename='SG.webp') }}" as="image">
@@ -85,31 +118,6 @@
             <br><br>
             <button type="submit">Log Game</button>
         </form>
-    </div>
-
-    <div class="form-container">
-        <h2>Game Info</h2>
-        <label for="search_title">Game Title:</label>
-        <input type="text" id="search_title" name="game_title" required autocomplete="off" style="border: none;">
-        <div id="search_suggestions" class="autocomplete-suggestions"></div>
-        <button id="search_button">Search</button>
-        <p id="search_result"></p>
-
-        <label for="search_nonempty_note">Latest Non-empty Entry:</label>
-        <button id="search_button_nonempty">Search</button>
-        <p id="search_result_nonempty"></p>
-
-        <label for="search_last_note">Edit Most Recent Note:</label>
-        <input type="text" id="search_last_note" name="game_title" required autocomplete="off" style="border: none;">
-        <button id="search_last_note" onclick="triggerSearch()">Edit</button>
-	<!-- Edit Note Button -->
-    	<button id="edit_note_button" style="display:none;" onclick="editNote()">Edit Note</button>
-   	<!-- Edit Note Container -->
-    	<div id="edit_note_container" style="display:none;">
-        	<textarea id="edit_note_input"></textarea>
-       		<button onclick="saveNote()">Save Note</button>
-    	</div>
-
     </div>
 
     <div class="form-container">
@@ -179,7 +187,6 @@
             <td style="padding: 10px;">{{last_year_play_count}}</td>
           </tr>
         </table>
-        <button onclick="window.location.href='/games_overview'" style="position: absolute; top: 10px; right: 10px;">View Games Played Overview</button>
 
         <h3>Top 5</h3>
         <ul id="top_games">
@@ -187,7 +194,47 @@
                 <li>{{ game }} - {{ count }} </li>
             {% endfor %}
         </ul>
-        <button onclick="window.location.href='/all_games'" style="position: absolute; bottom: 10px; right: 10px;">View All Games</button>
+    </div>
+
+    <div class="form-container">
+        <h2>Extra Game Info and Tools</h2>
+        <label for="search_title">Game Title:</label>
+        <input type="text" id="search_title" name="game_title" required autocomplete="off" style="border: none;">
+        <div id="search_suggestions" class="autocomplete-suggestions"></div>
+        <button id="search_button">Search</button>
+        <p id="search_result"></p>
+
+        <label for="search_nonempty_note">Latest Non-empty Entry:</label>
+        <button id="search_button_nonempty">Search</button>
+        <p id="search_result_nonempty"></p>
+
+        <label for="search_last_note">Edit Most Recent Note:</label>
+        <input type="text" id="search_last_note" name="game_title" required autocomplete="off" style="border: none;">
+        <button id="search_last_note" onclick="triggerSearch()">Edit</button>
+	<!-- Edit Note Button -->
+    	<button id="edit_note_button" style="display:none;" onclick="editNote()">Edit Note</button>
+   	<!-- Edit Note Container -->
+    	<div id="edit_note_container" style="display:none;">
+        	<textarea id="edit_note_input"></textarea>
+       		<button onclick="saveNote()">Save Note</button>
+    	</div>
+	<br>
+	<br>
+        <label for="games_played_overview">Games played Overview:</label>
+        <button onclick="window.location.href='/games_overview'" id=games_played_overview">Enter</button>
+	<br>
+	<br>
+        <label for="all_games_rank">Rankings for all games:</label>
+        <button onclick="window.location.href='/all_games'" id="all_games_rank">Enter</button>
+	<br>
+	<br>
+        <label for="imp_but">Over view of Imperium losses and wins:</label>
+        <button onclick="window.location.href='/imperium'" id="imp_but">Enter</button>
+	<br>
+	<br>
+        <label for="sg_but">Sleeping Gods Log:</label>
+        <button onclick="window.location.href='/sleeping_gods'" id="sg_but">Enter</button>
+
     </div>
 
     <script>
