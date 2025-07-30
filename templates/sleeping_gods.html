@@ -1,4 +1,107 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Log a location in sleeping gods</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            background-image: url("{{ url_for('static', filename='SG.webp') }}");
+            background-size: cover;
+            background-attachment: scroll;
+            background-repeat: no-repeat;
+            background-position: center center;
+            color: #FFFFFF;
+        }
+        h1, label {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+        }
+        .form-container {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 600px;
+            margin: 20px auto;
+            position: relative;
+            overflow-x: auto;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+	table {
+	    width: 100%; /* Ensures the table fits within the container */
+	    max-width: 100%; /* Prevents the table from exceeding the container width */
+	    border-collapse: collapse; /* Ensures borders are collapsed */
+	}
+	input[type="number"] {
+	    width: 40px; /* Adjust as needed */
+	}
+	.form-container th,
+	.form-container td {
+	    border-bottom: 1px solid rgba(255, 255, 255, 0.1); /* Light horizontal line */
+	}
+        .no-lines {
+            border-collapse: collapse;
+        }
+        .no-lines td {
+            border: none;
+        }
+        .no-lines th {
+            border: none;
+        }
+        .defeat-counter-inline {
+            display: flex;
+            align-items: center;
+	    gap: 15px;
+        }
+
+        .counter-button {
+            background-color: #c45f5f;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .counter-button:hover {
+            background-color: #cc0000;
+        }
+
+        .reset-button:hover {
+            background-color: #444;
+        }
+
+        .reset-button{
+            padding: 5px 10px;
+            background-color: #666;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+	}
+
+	#reset_visited:hover {
+	    background-color: #cc0000;
+	}
+
+    </style>
+
+    <link rel="preload" href="{{ url_for('static', filename='SG.webp') }}" as="image">
+
+</head>
+<body>
     <h1></h1>
     <button onclick="window.location.href='/'">Back to Home</button>
 
@@ -575,3 +678,20 @@
 	}
 
     </script>
+</body>
+<footer style="
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    font-size: 12px;
+    color: #ccc;
+    background-color: rgba(0, 0, 0, 0.4);
+    padding: 6px 12px;
+    line-height: 1.5;
+    border-top-left-radius: 6px;
+    max-width: 90%;
+    z-index: 1000;
+">
+    Background image: © Ryan Laukat / Red Raven Games — used with appreciation.
+</footer>
+</html>

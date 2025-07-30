@@ -1,6 +1,10 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 import psycopg2
+import os
+from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -9,7 +13,7 @@ def get_db_connection():
         host="localhost",
         database="boardgames",
         user="postgres",
-        password="6601"
+        password=os.getenv("PASSWORD")
     )
     return conn
 
