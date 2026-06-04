@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 import psycopg2
 import os
 import random
@@ -11,6 +11,14 @@ load_dotenv()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB upload limit
+app.secret_key = os.getenv('SECRET_KEY')
+
+@app.before_request
+def require_login():
+    if request.endpoint in ('login', 'logout', 'static'):
+        return
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
 
 selector_pool = []
 selector_choices = []
@@ -25,6 +33,21 @@ def get_db_connection():
         user="postgres",
         password=os.getenv("PASSWORD")
     )
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        if request.form.get('password') == os.getenv('APP_PASSWORD'):
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        error = 'Wrong password'
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 @app.route('/add_selector_game', methods=['POST'])
 def add_selector_game():
