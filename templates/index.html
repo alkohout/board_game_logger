@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Log a Game</title>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link rel="apple-touch-icon" href="static/favicon.png">
     <style>
         .autocomplete-suggestions {
             border: none;
@@ -234,11 +235,48 @@
 	<br>
         <label for="sg_but">Sleeping Gods Log:</label>
         <button onclick="window.location.href='/sleeping_gods'" id="sg_but">Enter</button>
+	<br>
+	<br>
+        <label for="rules_but">Rules Assistant (AI):</label>
+        <button onclick="window.location.href='/rules_assistant'" id="rules_but">Enter</button>
 
+    </div>
+
+    <div class="form-container">
+        <h2>Boardgame Selector</h2>
+
+        <label for="selector_player">Player:</label>
+        <input type="number" id="selector_player" name="selector_player" min="1" value="1" style="border: none;">
+
+	<br></br>
+        <label for="selector_game_title">Game Title:</label>
+        <input type="text" id="selector_game_title" name="selector_game_title" autocomplete="off" style="border: none;">
+        <div id="selector_suggestions" class="autocomplete-suggestions"></div>
+
+        <label for="choice_type">Choice:</label>
+        <select id="choice_type" name="choice_type">
+            <option value="first" selected>First Choice</option>
+            <option value="second">Second Choice</option>
+            <option value="third">Third Choice</option>
+        </select>
+
+        <br><br>
+        <button id="add_selector_game_button">Add Choice</button>
+        <button id="pick_selector_game_button">Pick Random Game</button>
+        <button id="clear_selector_pool_button">Clear Choices</button>
+
+        <p id="selector_message"></p>
+        <p id="selector_pick_result" style="font-weight: bold;"></p>
+
+        <h3>Current Choices</h3>
+        <ul id="selector_pool_list"></ul>
     </div>
 
     <script>
         $(document).ready(function() {
+
+	    loadSelectorPool();
+
             // Autocomplete for Add Game
             $('#game_title').on('input', function() {
                 let searchTerm = $(this).val();
@@ -440,6 +478,114 @@
                 }
             });
         }
+
+        function loadSelectorPool() {
+            $.get('/get_selector_pool', function(data) {
+                const poolList = $('#selector_pool_list');
+                poolList.empty();
+
+                if (!data.pool || data.pool.length === 0) {
+                    poolList.append('<li>No choices added yet.</li>');
+                    $('#selector_player').val(1);
+                    $('#choice_type').val('first');
+                    return;
+                }
+
+                data.pool.forEach(function(entry) {
+                    let label = '';
+                    if (entry.choice_type === 'first') label = 'First Choice';
+                    if (entry.choice_type === 'second') label = 'Second Choice';
+                    if (entry.choice_type === 'third') label = 'Third Choice';
+
+                    poolList.append(`<li>Player ${entry.player} - ${label}: ${entry.game_title}</li>`);
+                });
+            });
+        }
+
+        $('#add_selector_game_button').click(function() {
+            const gameTitle = $('#selector_game_title').val().trim();
+            const choiceType = $('#choice_type').val();
+            const player = $('#selector_player').val();
+
+            $.post('/add_selector_game', {
+                game_title: gameTitle,
+                choice_type: choiceType,
+                player: player
+            }, function(data) {
+                $('#selector_message').text(data.message);
+                $('#selector_game_title').val('');
+                $('#selector_suggestions').empty();
+                loadSelectorPool();
+
+                // Auto-advance choice/player
+                if (choiceType === 'first') {
+                    $('#choice_type').val('second');
+                } else if (choiceType === 'second') {
+                    $('#choice_type').val('third');
+                } else if (choiceType === 'third') {
+                    $('#choice_type').val('first');
+                    $('#selector_player').val(parseInt(player) + 1);
+                }
+            }).fail(function(xhr) {
+                $('#selector_message').text(xhr.responseJSON.message);
+            });
+        });
+
+        $('#pick_selector_game_button').click(function() {
+            $.get('/random_selector_pick', function(data) {
+                let label = '';
+                if (data.selected.choice_type === 'first') label = 'First Choice';
+                if (data.selected.choice_type === 'second') label = 'Second Choice';
+                if (data.selected.choice_type === 'third') label = 'Third Choice';
+
+                $('#selector_pick_result').html(
+                    `Selected: <strong>${data.selected.game_title}</strong> (Player ${data.selected.player}, ${label})`
+                );
+            }).fail(function(xhr) {
+                $('#selector_pick_result').text(xhr.responseJSON.message);
+            });
+        });
+
+        $('#clear_selector_pool_button').click(function() {
+            $.post('/clear_selector_pool', function(data) {
+                $('#selector_message').text(data.message);
+                $('#selector_pick_result').text('');
+                $('#selector_game_title').val('');
+                $('#selector_suggestions').empty();
+                $('#selector_player').val(1);
+                $('#choice_type').val('first');
+                loadSelectorPool();
+            });
+        });
+
+        $('#selector_game_title').on('input', function() {
+            let searchTerm = $(this).val();
+            if (searchTerm.length > 1) {
+                $.get('/search_games', { term: searchTerm }, function(data) {
+                    $('#selector_suggestions').empty();
+                    let addedSuggestions = new Set();
+
+                    if (data.suggestions.length > 0) {
+                        data.suggestions.forEach(function(suggestion) {
+                            if (!addedSuggestions.has(suggestion)) {
+                                $('#selector_suggestions').append(
+                                    '<div class="autocomplete-suggestion">' + suggestion + '</div>'
+                                );
+                                addedSuggestions.add(suggestion);
+                            }
+                        });
+                    }
+                });
+            } else {
+                $('#selector_suggestions').empty();
+            }
+        });
+
+        $(document).on('click', '#selector_suggestions .autocomplete-suggestion', function() {
+            $('#selector_game_title').val($(this).text());
+            $('#selector_suggestions').empty();
+        });
+
     </script>
 </body>
 <footer style="

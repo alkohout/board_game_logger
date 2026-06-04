@@ -1,21 +1,104 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 import psycopg2
 import os
+import random
+import anthropic
+import pdfplumber
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
 
 load_dotenv()
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB upload limit
+
+selector_pool = []
+selector_choices = []
 
 def get_db_connection():
-    conn = psycopg2.connect(
+    database_url = os.getenv('DATABASE_URL')
+    if database_url:
+        return psycopg2.connect(database_url)
+    return psycopg2.connect(
         host="localhost",
         database="boardgames",
         user="postgres",
         password=os.getenv("PASSWORD")
     )
-    return conn
+
+@app.route('/add_selector_game', methods=['POST'])
+def add_selector_game():
+    game_title = request.form.get('game_title', '').strip()
+    choice_type = request.form.get('choice_type', '').strip()
+    player_raw = request.form.get('player', '').strip()
+
+    if not game_title:
+        return jsonify({'success': False, 'message': 'Game title is required.'}), 400
+
+    if choice_type not in ['first', 'second', 'third']:
+        return jsonify({'success': False, 'message': 'Invalid choice type.'}), 400
+
+    try:
+        player = int(player_raw)
+    except ValueError:
+        return jsonify({'success': False, 'message': 'Invalid player number.'}), 400
+
+    # Prevent duplicate choice type for same player
+    existing = next(
+        (entry for entry in selector_choices if entry['player'] == player and entry['choice_type'] == choice_type),
+        None
+    )
+    if existing:
+        return jsonify({
+            'success': False,
+            'message': f'Player {player} already has a {choice_type} choice.'
+        }), 400
+
+    selector_choices.append({
+        'player': player,
+        'choice_type': choice_type,
+        'game_title': game_title
+    })
+
+    order_map = {'first': 1, 'second': 2, 'third': 3}
+    selector_choices.sort(key=lambda x: (x['player'], order_map[x['choice_type']]))
+
+    return jsonify({
+        'success': True,
+        'message': f'Player {player} {choice_type} choice added: "{game_title}"',
+        'choices': selector_choices
+    })
+
+@app.route('/random_selector_pick', methods=['GET'])
+def random_selector_pick():
+    if not selector_choices:
+        return jsonify({'success': False, 'message': 'No games in the selector pool.'}), 400
+
+    weight_map = {
+        'first': 3,
+        'second': 2,
+        'third': 1
+    }
+
+    weighted_pool = []
+    for entry in selector_choices:
+        weighted_pool.extend([entry] * weight_map[entry['choice_type']])
+
+    selected = random.choice(weighted_pool)
+
+    return jsonify({
+        'success': True,
+        'selected': selected
+    })
+
+@app.route('/clear_selector_pool', methods=['POST'])
+def clear_selector_pool():
+    selector_choices.clear()
+    return jsonify({'success': True, 'message': 'Selector pool cleared.'})
+
+@app.route('/get_selector_pool', methods=['GET'])
+def get_selector_pool():
+    return jsonify({'success': True, 'pool': selector_choices})
 
 @app.route('/add', methods=['POST'])
 def add_game():
@@ -791,6 +874,52 @@ def imperium():
     """)
     greek_won=cur.fetchone()[0]
 
+    #// Guptas ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE (level ILIKE '%Guptas%' AND result ILIKE '%lost%')  
+
+    """)
+    gupt_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Guptas%' AND result ILIKE '%won%' 
+    """)
+    gupt_won=cur.fetchone()[0]
+
+    #// Inuit ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Inuit%' AND result ILIKE '%lost%'
+    """)
+    inuit_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Inuit%' AND result ILIKE '%won%'
+    """)
+    inuit_won=cur.fetchone()[0]
+
+    #// Japanese ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Japanese%' AND result ILIKE '%lost%'
+    """)
+    japan_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Japanese' AND result ILIKE '%won%'
+    """)
+    japan_won=cur.fetchone()[0]
+
     #// Macedonian ////////////////////////////////////////////////////
     cur.execute("""
         SELECT COUNT(*) 
@@ -806,6 +935,52 @@ def imperium():
     """)
     mace_won=cur.fetchone()[0]
 
+    #// Magyars ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Magyars%' AND result ILIKE '%lost%'
+    """)
+    magy_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Magyars%' AND result ILIKE '%won%'
+    """)
+    magy_won=cur.fetchone()[0]
+
+    #// Martians ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Martians%' AND result ILIKE '%lost%'
+    """)
+    mart_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Martians%' AND result ILIKE '%won%'
+    """)
+    mart_won=cur.fetchone()[0]
+
+
+    #// Mayans ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Mayan%' AND result ILIKE '%lost%'
+    """)
+    may_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Mayan%' AND result ILIKE '%won%'
+    """)
+    may_won=cur.fetchone()[0]
+
     #// Mauryans ////////////////////////////////////////////////////
     cur.execute("""
         SELECT COUNT(*) 
@@ -820,6 +995,21 @@ def imperium():
         WHERE level ILIKE '%Mauryans%' AND result ILIKE '%won%'
     """)
     mau_won=cur.fetchone()[0]
+
+    #// Mayans ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Mayans%' AND result ILIKE '%lost%'
+    """)
+    may_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Mayans%' AND result ILIKE '%won%'
+    """)
+    may_won=cur.fetchone()[0]
 
     #// Minoans ////////////////////////////////////////////////////
     cur.execute("""
@@ -866,6 +1056,22 @@ def imperium():
     """)
     persian_won=cur.fetchone()[0]
 
+
+    #// Polynesians ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Polynesian%' AND result ILIKE '%lost%'
+    """)
+    poly_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Polynesian%' AND result ILIKE '%won%'
+    """)
+    poly_won=cur.fetchone()[0]
+
     #// Qin ////////////////////////////////////////////////////
     cur.execute("""
         SELECT COUNT(*) 
@@ -881,6 +1087,21 @@ def imperium():
     """)
     qin_won=cur.fetchone()[0]
 
+    #// Sassanids ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Sassanids%' AND result ILIKE '%lost%'
+    """)
+    sass_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Sassanids%' AND result ILIKE '%won%'
+    """)
+    sass_won=cur.fetchone()[0]
+
     #// Scythians ////////////////////////////////////////////////////
     cur.execute("""
         SELECT COUNT(*) 
@@ -895,6 +1116,36 @@ def imperium():
         WHERE level ILIKE '%Scythians%' AND result ILIKE '%won%'
     """)
     scy_won=cur.fetchone()[0]
+
+    #// Taino ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Taino%' AND result ILIKE '%lost%'
+    """)
+    tai_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Taino%' AND result ILIKE '%won%'
+    """)
+    tai_won=cur.fetchone()[0]
+
+    #// Tang ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Tang%' AND result ILIKE '%lost%'
+    """)
+    tang_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Tang%' AND result ILIKE '%won%'
+    """)
+    tang_won=cur.fetchone()[0]
 
     #// Utopians ////////////////////////////////////////////////////
     cur.execute("""
@@ -926,6 +1177,21 @@ def imperium():
     """)
     vik_won=cur.fetchone()[0]
 
+    #// Wagadou ////////////////////////////////////////////////////
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Wagadou%' AND result ILIKE '%lost%'
+    """)
+    wag_lost=cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM imperium 
+        WHERE level ILIKE '%Wagadou%' AND result ILIKE '%won%'
+    """)
+    wag_won=cur.fetchone()[0]
+
     return render_template(
         'imperium.html',
 	abba_lost=abba_lost,
@@ -946,24 +1212,46 @@ def imperium():
 	egyp_won=egyp_won,
 	greek_lost=greek_lost,
 	greek_won=greek_won,
+	gupt_lost=gupt_lost,
+	gupt_won=gupt_won,
+	inuit_lost=inuit_lost,
+	inuit_won=inuit_won,
+	japan_lost=japan_lost,
+	japan_won=japan_won,
 	mace_lost=mace_lost,
 	mace_won=mace_won,
+	magy_lost=magy_lost,
+	magy_won=magy_won,
+	mart_lost=mart_lost,
+	mart_won=mart_won,
 	mau_lost=mau_lost,
 	mau_won=mau_won,
+	may_lost=may_lost,
+	may_won=may_won,
 	min_lost=min_lost,
 	min_won=min_won,
 	olm_lost=olm_lost,
 	olm_won=olm_won,
 	persian_lost=persian_lost,
 	persian_won=persian_won,
+	poly_lost=poly_lost,
+	poly_won=poly_won,
 	qin_lost=qin_lost,
 	qin_won=qin_won,
+	sass_lost=sass_lost,
+	sass_won=sass_won,
 	scy_lost=scy_lost,
 	scy_won=scy_won,
+	tai_lost=tai_lost,
+	tai_won=tai_won,
+	tang_lost=tang_lost,
+	tang_won=tang_won,
 	uto_lost=uto_lost,
 	uto_won=uto_won,
 	vik_lost=vik_lost,
-	vik_won=vik_won
+	vik_won=vik_won,
+	wag_lost=wag_lost,
+	wag_won=wag_won
     )
 	
 @app.route('/games_overview')
@@ -1233,6 +1521,98 @@ def update():
         return jsonify({"success": False, "message": str(e)})
 
 
+@app.route('/rules_assistant')
+def rules_assistant():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
+    game_titles = [row[0] for row in cur.fetchall()]
+    cur.execute("SELECT game_title FROM rulebooks")
+    has_rulebook_set = {row[0] for row in cur.fetchall()}
+    cur.close()
+    conn.close()
+    has_rulebook = {g: g in has_rulebook_set for g in game_titles}
+    return render_template('rules_assistant.html', game_titles=game_titles, has_rulebook=has_rulebook)
+
+@app.route('/upload_rulebook', methods=['POST'])
+def upload_rulebook():
+    game_title = request.form.get('game_title', '').strip()
+    if not game_title:
+        return jsonify({'success': False, 'message': 'Game title required'}), 400
+    if 'pdf_file' not in request.files or request.files['pdf_file'].filename == '':
+        return jsonify({'success': False, 'message': 'No file selected'}), 400
+    pdf_file = request.files['pdf_file']
+    if not pdf_file.filename.lower().endswith('.pdf'):
+        return jsonify({'success': False, 'message': 'File must be a PDF'}), 400
+
+    try:
+        with pdfplumber.open(pdf_file.stream) as pdf:
+            pages_text = [page.extract_text() or '' for page in pdf.pages]
+        rules_text = '\n\n'.join(pages_text).strip()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Could not read PDF: {str(e)}'}), 500
+
+    if not rules_text:
+        return jsonify({'success': False, 'message': 'No text found in PDF — it may be a scanned/image-only file'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO rulebooks (game_title, rules_text)
+        VALUES (%s, %s)
+        ON CONFLICT (game_title) DO UPDATE SET rules_text = EXCLUDED.rules_text, uploaded_at = NOW()
+    """, (game_title, rules_text))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'message': f'Rulebook saved for {game_title}'})
+
+@app.route('/ask_rules', methods=['POST'])
+def ask_rules():
+    data = request.get_json()
+    game_title = (data.get('game_title') or '').strip()
+    question = (data.get('question') or '').strip()
+    if not game_title or not question:
+        return jsonify({'success': False, 'message': 'Game and question required'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT rules_text FROM rulebooks WHERE game_title = %s", (game_title,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        return jsonify({'success': False, 'message': f'No rulebook found for {game_title}'}), 404
+
+    rules_text = row[0]
+    api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not api_key:
+        return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
+
+    client = anthropic.Anthropic(api_key=api_key)
+    try:
+        response = client.messages.create(
+            model='claude-opus-4-8',
+            max_tokens=1024,
+            system=[{
+                'type': 'text',
+                'text': (
+                    f'You are a board game rules expert for "{game_title}". '
+                    f'Answer questions based only on the rulebook text provided. '
+                    f'If the rules do not address the question, say so clearly.\n\n'
+                    f'RULEBOOK:\n{rules_text}'
+                ),
+                'cache_control': {'type': 'ephemeral'}
+            }],
+            messages=[{'role': 'user', 'content': question}]
+        )
+        return jsonify({'success': True, 'answer': response.content[0].text})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'API error: {str(e)}'}), 500
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    port = int(os.getenv('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
 

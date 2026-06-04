@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rules Assistant</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            background-image: url("{{ url_for('static', filename='SG.webp') }}");
+            background-size: cover;
+            background-attachment: scroll;
+            background-repeat: no-repeat;
+            background-position: center center;
+            color: #FFFFFF;
+            font-family: sans-serif;
+        }
+        h1, h2, label {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+        }
+        .form-container {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 600px;
+            margin: 20px auto;
+        }
+        select, input[type="text"], input[type="file"], textarea {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: none;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.9);
+            color: #000;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+        button:hover { background-color: #45a049; }
+        button:disabled { background-color: #888; cursor: default; }
+        .back-btn { background-color: #555; }
+        .back-btn:hover { background-color: #333; }
+        .upload-btn { background-color: #2196F3; }
+        .upload-btn:hover { background-color: #1976D2; }
+        .status { margin-top: 8px; font-size: 0.9em; }
+        .status.ok { color: #90EE90; }
+        .status.err { color: #FF6B6B; }
+        .rulebook-indicator {
+            display: inline-block;
+            font-size: 0.8em;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .has-rulebook { background: #2e7d32; }
+        .no-rulebook { background: #7f3333; }
+        #answer-box {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            padding: 16px;
+            margin-top: 16px;
+            white-space: pre-wrap;
+            line-height: 1.6;
+            display: none;
+        }
+        .spinner {
+            display: none;
+            margin-top: 10px;
+            font-style: italic;
+            color: #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <button class="back-btn" onclick="window.location.href='/'">← Back</button>
+        <h1>Rules Assistant</h1>
+        <p style="color:#ccc; font-size:0.9em;">Select a game, upload its rulebook PDF once, then ask questions.</p>
+
+        <label for="game_select">Game:</label>
+        <select id="game_select">
+            <option value="">-- Select a game --</option>
+            {% for game in game_titles %}
+            <option value="{{ game }}" data-has-rulebook="{{ 'true' if has_rulebook[game] else 'false' }}">
+                {{ game }}
+            </option>
+            {% endfor %}
+        </select>
+
+        <div id="rulebook-status" style="margin-bottom:12px; display:none;">
+            <span id="rulebook-badge" class="rulebook-indicator"></span>
+        </div>
+    </div>
+
+    <div class="form-container" id="upload-section" style="display:none;">
+        <h2>Upload Rulebook</h2>
+        <label for="pdf_file">PDF file:</label>
+        <input type="file" id="pdf_file" accept=".pdf">
+        <button class="upload-btn" id="upload-btn">Upload</button>
+        <div id="upload-status" class="status"></div>
+    </div>
+
+    <div class="form-container" id="ask-section" style="display:none;">
+        <h2>Ask a Question</h2>
+        <label for="question">Your question:</label>
+        <textarea id="question" rows="3" placeholder="e.g. What happens when a player runs out of resources?"></textarea>
+        <button id="ask-btn">Ask</button>
+        <div class="spinner" id="spinner">Thinking...</div>
+        <div id="answer-box"></div>
+    </div>
+
+    <script>
+        let selectedGame = '';
+        let gameHasRulebook = false;
+
+        $('#game_select').on('change', function() {
+            selectedGame = $(this).val();
+            const opt = $(this).find('option:selected');
+            gameHasRulebook = opt.data('has-rulebook') === 'true';
+
+            if (!selectedGame) {
+                $('#rulebook-status').hide();
+                $('#upload-section').hide();
+                $('#ask-section').hide();
+                return;
+            }
+
+            $('#rulebook-status').show();
+            if (gameHasRulebook) {
+                $('#rulebook-badge').text('Rulebook uploaded').removeClass('no-rulebook').addClass('has-rulebook');
+                $('#ask-section').show();
+            } else {
+                $('#rulebook-badge').text('No rulebook — upload one below').removeClass('has-rulebook').addClass('no-rulebook');
+                $('#ask-section').hide();
+            }
+            $('#upload-section').show();
+            $('#answer-box').hide().text('');
+            $('#upload-status').text('').removeClass('ok err');
+        });
+
+        $('#upload-btn').on('click', function() {
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            const file = $('#pdf_file')[0].files[0];
+            if (!file) { alert('Choose a PDF file.'); return; }
+
+            const formData = new FormData();
+            formData.append('game_title', selectedGame);
+            formData.append('pdf_file', file);
+
+            $('#upload-btn').prop('disabled', true).text('Uploading...');
+            $.ajax({
+                url: '/upload_rulebook',
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(data) {
+                    if (data.success) {
+                        $('#upload-status').text(data.message).removeClass('err').addClass('ok');
+                        gameHasRulebook = true;
+                        $('#rulebook-badge').text('Rulebook uploaded').removeClass('no-rulebook').addClass('has-rulebook');
+                        // Update the option's data attribute
+                        $('#game_select option[value="' + selectedGame + '"]').data('has-rulebook', 'true');
+                        $('#ask-section').show();
+                    } else {
+                        $('#upload-status').text(data.message).removeClass('ok').addClass('err');
+                    }
+                },
+                error: function(xhr) {
+                    const msg = xhr.responseJSON ? xhr.responseJSON.message : 'Upload failed';
+                    $('#upload-status').text(msg).removeClass('ok').addClass('err');
+                },
+                complete: function() {
+                    $('#upload-btn').prop('disabled', false).text('Upload');
+                }
+            });
+        });
+
+        $('#ask-btn').on('click', function() {
+            const question = $('#question').val().trim();
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            if (!question) { alert('Enter a question.'); return; }
+
+            $('#ask-btn').prop('disabled', true);
+            $('#spinner').show();
+            $('#answer-box').hide().text('');
+
+            $.ajax({
+                url: '/ask_rules',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ game_title: selectedGame, question: question }),
+                success: function(data) {
+                    if (data.success) {
+                        $('#answer-box').text(data.answer).show();
+                    } else {
+                        $('#answer-box').text('Error: ' + data.message).show();
+                    }
+                },
+                error: function(xhr) {
+                    const msg = xhr.responseJSON ? xhr.responseJSON.message : 'Request failed';
+                    $('#answer-box').text('Error: ' + msg).show();
+                },
+                complete: function() {
+                    $('#ask-btn').prop('disabled', false);
+                    $('#spinner').hide();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
