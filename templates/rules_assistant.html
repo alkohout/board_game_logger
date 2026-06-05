@@ -127,7 +127,7 @@
         $('#game_select').on('change', function() {
             selectedGame = $(this).val();
             const opt = $(this).find('option:selected');
-            gameHasRulebook = opt.data('has-rulebook') === 'true';
+            gameHasRulebook = opt.attr('data-has-rulebook') === 'true';
 
             if (!selectedGame) {
                 $('#rulebook-status').hide();
