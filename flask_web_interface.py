@@ -1634,12 +1634,22 @@ def rules_assistant():
     cur = conn.cursor()
     cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
     game_titles = [row[0] for row in cur.fetchall()]
-    cur.execute("SELECT game_title FROM rulebooks")
+    cur.execute("SELECT game_title FROM rulebooks WHERE pdf_data IS NOT NULL")
     has_rulebook_set = {row[0] for row in cur.fetchall()}
     cur.close()
     conn.close()
     has_rulebook = {g: g in has_rulebook_set for g in game_titles}
     return render_template('rules_assistant.html', game_titles=game_titles, has_rulebook=has_rulebook)
+
+@app.route('/debug_rulebooks')
+def debug_rulebooks():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT game_title, uploaded_at, length(pdf_data) as pdf_chars FROM rulebooks ORDER BY uploaded_at DESC")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify([{'game_title': r[0], 'uploaded_at': str(r[1]), 'pdf_chars': r[2]} for r in rows])
 
 @app.route('/upload_rulebook', methods=['POST'])
 def upload_rulebook():
@@ -1655,16 +1665,19 @@ def upload_rulebook():
     pdf_file.stream.seek(0)
     pdf_b64 = base64.standard_b64encode(pdf_file.stream.read()).decode('utf-8')
 
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO rulebooks (game_title, pdf_data)
-        VALUES (%s, %s)
-        ON CONFLICT (game_title) DO UPDATE SET pdf_data = EXCLUDED.pdf_data, uploaded_at = NOW()
-    """, (game_title, pdf_b64))
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO rulebooks (game_title, pdf_data)
+            VALUES (%s, %s)
+            ON CONFLICT (game_title) DO UPDATE SET pdf_data = EXCLUDED.pdf_data, uploaded_at = NOW()
+        """, (game_title, pdf_b64))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'DB error: {str(e)}'}), 500
     return jsonify({'success': True, 'message': f'Rulebook saved for {game_title}'})
 
 @app.route('/ask_rules', methods=['POST'])
