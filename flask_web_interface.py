@@ -1653,6 +1653,7 @@ def upload_rulebook():
         return jsonify({'success': False, 'message': 'File must be a PDF'}), 400
 
     try:
+        pdf_file.stream.seek(0)
         with pdfplumber.open(pdf_file.stream) as pdf:
             pages_text = [page.extract_text() or '' for page in pdf.pages]
         rules_text = '\n\n'.join(pages_text).strip()
