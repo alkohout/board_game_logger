@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 import psycopg2
 import os
+import re
 import random
 import anthropic
 import base64
@@ -1634,12 +1635,13 @@ def rules_assistant():
     cur = conn.cursor()
     cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
     game_titles = [row[0] for row in cur.fetchall()]
-    cur.execute("SELECT game_title FROM rulebooks WHERE pdf_data IS NOT NULL")
-    has_rulebook_set = {row[0] for row in cur.fetchall()}
+    cur.execute("SELECT game_title, bgg_game_id FROM rulebooks WHERE pdf_data IS NOT NULL")
+    rulebook_rows = cur.fetchall()
     cur.close()
     conn.close()
-    has_rulebook = {g: g in has_rulebook_set for g in game_titles}
-    return render_template('rules_assistant.html', game_titles=game_titles, has_rulebook=has_rulebook)
+    has_rulebook = {g: any(r[0] == g for r in rulebook_rows) for g in game_titles}
+    has_bgg = {g: any(r[0] == g and r[1] for r in rulebook_rows) for g in game_titles}
+    return render_template('rules_assistant.html', game_titles=game_titles, has_rulebook=has_rulebook, has_bgg=has_bgg)
 
 @app.route('/debug_rulebooks')
 def debug_rulebooks():
@@ -1662,6 +1664,13 @@ def upload_rulebook():
     if not pdf_file.filename.lower().endswith('.pdf'):
         return jsonify({'success': False, 'message': 'File must be a PDF'}), 400
 
+    bgg_url = request.form.get('bgg_url', '').strip()
+    bgg_id = None
+    if bgg_url:
+        m = re.search(r'/boardgame/(\d+)', bgg_url)
+        if m:
+            bgg_id = m.group(1)
+
     pdf_file.stream.seek(0)
     pdf_b64 = base64.standard_b64encode(pdf_file.stream.read()).decode('utf-8')
 
@@ -1669,16 +1678,42 @@ def upload_rulebook():
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO rulebooks (game_title, pdf_data)
-            VALUES (%s, %s)
-            ON CONFLICT (game_title) DO UPDATE SET pdf_data = EXCLUDED.pdf_data, uploaded_at = NOW()
-        """, (game_title, pdf_b64))
+            INSERT INTO rulebooks (game_title, pdf_data, bgg_game_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (game_title) DO UPDATE
+                SET pdf_data = EXCLUDED.pdf_data,
+                    bgg_game_id = COALESCE(EXCLUDED.bgg_game_id, rulebooks.bgg_game_id),
+                    uploaded_at = NOW()
+        """, (game_title, pdf_b64, bgg_id))
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         return jsonify({'success': False, 'message': f'DB error: {str(e)}'}), 500
-    return jsonify({'success': True, 'message': f'Rulebook saved for {game_title}'})
+    return jsonify({'success': True, 'message': f'Rulebook saved for {game_title}', 'bgg_linked': bgg_id is not None})
+
+@app.route('/set_bgg_url', methods=['POST'])
+def set_bgg_url():
+    try:
+        data = request.get_json()
+        game_title = (data.get('game_title') or '').strip()
+        bgg_url = (data.get('bgg_url') or '').strip()
+        if not game_title or not bgg_url:
+            return jsonify({'success': False, 'message': 'Game title and BGG URL required'}), 400
+        m = re.search(r'/boardgame/(\d+)', bgg_url)
+        if not m:
+            return jsonify({'success': False, 'message': 'Could not find game ID in URL — paste the full BGG game page URL'}), 400
+        bgg_id = m.group(1)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE rulebooks SET bgg_game_id = %s WHERE game_title = %s", (bgg_id, game_title))
+        conn.commit()
+        cur.close()
+        conn.close()
+        _bgg_id_cache[game_title] = bgg_id
+        return jsonify({'success': True, 'bgg_id': bgg_id})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/ask_rules', methods=['POST'])
 def ask_rules():
@@ -1691,7 +1726,7 @@ def ask_rules():
 
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT pdf_data FROM rulebooks WHERE game_title = %s", (game_title,))
+        cur.execute("SELECT pdf_data, bgg_game_id FROM rulebooks WHERE game_title = %s", (game_title,))
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -1699,11 +1734,13 @@ def ask_rules():
         if not row or not row[0]:
             return jsonify({'success': False, 'message': f'No rulebook found for {game_title} — try re-uploading'}), 404
 
-        pdf_b64 = row[0]
+        pdf_b64, stored_bgg_id = row[0], row[1]
+        if stored_bgg_id:
+            _bgg_id_cache[game_title] = stored_bgg_id
 
         # Fetch relevant BGG forum threads
         bgg_section = ''
-        bgg_game_id = bgg_search_game_id(game_title)
+        bgg_game_id = stored_bgg_id or bgg_search_game_id(game_title)
         if bgg_game_id:
             forum_id = bgg_get_rules_forum_id(bgg_game_id)
             if forum_id:

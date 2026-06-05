@@ -91,14 +91,17 @@
         <select id="game_select">
             <option value="">-- Select a game --</option>
             {% for game in game_titles %}
-            <option value="{{ game }}" data-has-rulebook="{{ 'true' if has_rulebook[game] else 'false' }}">
+            <option value="{{ game }}"
+                data-has-rulebook="{{ 'true' if has_rulebook[game] else 'false' }}"
+                data-has-bgg="{{ 'true' if has_bgg[game] else 'false' }}">
                 {{ game }}
             </option>
             {% endfor %}
         </select>
 
-        <div id="rulebook-status" style="margin-bottom:12px; display:none;">
+        <div id="rulebook-status" style="margin-bottom:4px; display:none;">
             <span id="rulebook-badge" class="rulebook-indicator"></span>
+            <span id="bgg-badge" class="rulebook-indicator"></span>
         </div>
     </div>
 
@@ -106,8 +109,18 @@
         <h2>Upload Rulebook</h2>
         <label for="pdf_file">PDF file:</label>
         <input type="file" id="pdf_file" accept=".pdf">
+        <label for="bgg_url" style="margin-top:8px;">BGG game page URL (for forum search):</label>
+        <input type="text" id="bgg_url" placeholder="https://boardgamegeek.com/boardgame/370591/imperium-horizons">
         <button class="upload-btn" id="upload-btn">Upload</button>
         <div id="upload-status" class="status"></div>
+    </div>
+
+    <div class="form-container" id="bgg-link-section" style="display:none;">
+        <h2>Link BGG Forum</h2>
+        <p style="color:#ccc; font-size:0.9em; margin:0 0 8px;">Find your game on BoardGameGeek and paste the URL to enable forum search.</p>
+        <input type="text" id="bgg_url_existing" placeholder="https://boardgamegeek.com/boardgame/370591/imperium-horizons">
+        <button class="upload-btn" id="set-bgg-btn">Save BGG Link</button>
+        <div id="bgg-link-status" class="status"></div>
     </div>
 
     <div class="form-container" id="ask-section" style="display:none;">
@@ -128,10 +141,12 @@
             selectedGame = $(this).val();
             const opt = $(this).find('option:selected');
             gameHasRulebook = opt.attr('data-has-rulebook') === 'true';
+            const gameHasBgg = opt.attr('data-has-bgg') === 'true';
 
             if (!selectedGame) {
                 $('#rulebook-status').hide();
                 $('#upload-section').hide();
+                $('#bgg-link-section').hide();
                 $('#ask-section').hide();
                 return;
             }
@@ -144,8 +159,17 @@
                 $('#rulebook-badge').text('No rulebook — upload one below').removeClass('has-rulebook').addClass('no-rulebook');
                 $('#ask-section').hide();
             }
+
+            if (gameHasBgg) {
+                $('#bgg-badge').text('BGG forum linked').removeClass('no-rulebook').addClass('has-rulebook');
+            } else {
+                $('#bgg-badge').text('No BGG forum link').removeClass('has-rulebook').addClass('no-rulebook');
+            }
+
             $('#upload-section').show();
+            $('#bgg-link-section').toggle(gameHasRulebook && !gameHasBgg);
             $('#answer-box').hide().text('');
+            $('#sources-line').hide();
             $('#upload-status').text('').removeClass('ok err');
         });
 
@@ -170,9 +194,15 @@
                         $('#upload-status').text(data.message).removeClass('err').addClass('ok');
                         gameHasRulebook = true;
                         $('#rulebook-badge').text('Rulebook uploaded').removeClass('no-rulebook').addClass('has-rulebook');
-                        // Update the option's data attribute
-                        $('#game_select option[value="' + selectedGame + '"]').data('has-rulebook', 'true');
+                        $('#game_select option[value="' + selectedGame + '"]').attr('data-has-rulebook', 'true');
                         $('#ask-section').show();
+                        if (data.bgg_linked) {
+                            $('#bgg-badge').text('BGG forum linked').removeClass('no-rulebook').addClass('has-rulebook');
+                            $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
+                            $('#bgg-link-section').hide();
+                        } else {
+                            $('#bgg-link-section').show();
+                        }
                     } else {
                         $('#upload-status').text(data.message).removeClass('ok').addClass('err');
                     }
@@ -218,6 +248,36 @@
                 complete: function() {
                     $('#ask-btn').prop('disabled', false);
                     $('#spinner').hide();
+                }
+            });
+        });
+
+        $('#set-bgg-btn').on('click', function() {
+            const bggUrl = $('#bgg_url_existing').val().trim();
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            if (!bggUrl) { alert('Paste a BGG URL.'); return; }
+            $('#set-bgg-btn').prop('disabled', true).text('Saving...');
+            $.ajax({
+                url: '/set_bgg_url',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ game_title: selectedGame, bgg_url: bggUrl }),
+                success: function(data) {
+                    if (data.success) {
+                        $('#bgg-link-status').text('BGG forum linked (ID: ' + data.bgg_id + ')').removeClass('err').addClass('ok');
+                        $('#bgg-badge').text('BGG forum linked').removeClass('no-rulebook').addClass('has-rulebook');
+                        $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
+                        $('#bgg-link-section').hide();
+                    } else {
+                        $('#bgg-link-status').text(data.message).removeClass('ok').addClass('err');
+                    }
+                },
+                error: function(xhr) {
+                    const msg = xhr.responseJSON ? xhr.responseJSON.message : 'Failed';
+                    $('#bgg-link-status').text(msg).removeClass('ok').addClass('err');
+                },
+                complete: function() {
+                    $('#set-bgg-btn').prop('disabled', false).text('Save BGG Link');
                 }
             });
         });
