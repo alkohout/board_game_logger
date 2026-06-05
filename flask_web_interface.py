@@ -1669,53 +1669,53 @@ def upload_rulebook():
 
 @app.route('/ask_rules', methods=['POST'])
 def ask_rules():
-    data = request.get_json()
-    game_title = (data.get('game_title') or '').strip()
-    question = (data.get('question') or '').strip()
-    if not game_title or not question:
-        return jsonify({'success': False, 'message': 'Game and question required'}), 400
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT pdf_data FROM rulebooks WHERE game_title = %s", (game_title,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if not row or not row[0]:
-        return jsonify({'success': False, 'message': f'No rulebook found for {game_title} — try re-uploading'}), 404
-
-    pdf_b64 = row[0]
-
-    # Fetch relevant BGG forum threads
-    bgg_section = ''
-    bgg_game_id = bgg_search_game_id(game_title)
-    if bgg_game_id:
-        forum_id = bgg_get_rules_forum_id(bgg_game_id)
-        if forum_id:
-            threads = bgg_get_relevant_threads(forum_id, question)
-            if threads:
-                bgg_section = '\n\n---\n\n'.join(threads)
-
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not api_key:
-        return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
-
-    # Build user message: PDF document + optional BGG text + question
-    user_content = [
-        {
-            'type': 'document',
-            'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': pdf_b64}
-        }
-    ]
-    question_text = question
-    if bgg_section:
-        question_text = f'BGG Rules Forum Discussions:\n{bgg_section}\n\nQuestion: {question}'
-    user_content.append({'type': 'text', 'text': question_text})
-
-    sources_used = 'rulebook' + (' + BGG forum' if bgg_section else '')
-    client = anthropic.Anthropic(api_key=api_key)
     try:
+        data = request.get_json()
+        game_title = (data.get('game_title') or '').strip()
+        question = (data.get('question') or '').strip()
+        if not game_title or not question:
+            return jsonify({'success': False, 'message': 'Game and question required'}), 400
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT pdf_data FROM rulebooks WHERE game_title = %s", (game_title,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row or not row[0]:
+            return jsonify({'success': False, 'message': f'No rulebook found for {game_title} — try re-uploading'}), 404
+
+        pdf_b64 = row[0]
+
+        # Fetch relevant BGG forum threads
+        bgg_section = ''
+        bgg_game_id = bgg_search_game_id(game_title)
+        if bgg_game_id:
+            forum_id = bgg_get_rules_forum_id(bgg_game_id)
+            if forum_id:
+                threads = bgg_get_relevant_threads(forum_id, question)
+                if threads:
+                    bgg_section = '\n\n---\n\n'.join(threads)
+
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
+
+        # Build user message: PDF document + optional BGG text + question
+        user_content = [
+            {
+                'type': 'document',
+                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': pdf_b64}
+            }
+        ]
+        question_text = question
+        if bgg_section:
+            question_text = f'BGG Rules Forum Discussions:\n{bgg_section}\n\nQuestion: {question}'
+        user_content.append({'type': 'text', 'text': question_text})
+
+        sources_used = 'rulebook' + (' + BGG forum' if bgg_section else '')
+        client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model='claude-opus-4-8',
             max_tokens=1024,
@@ -1729,7 +1729,7 @@ def ask_rules():
         )
         return jsonify({'success': True, 'answer': response.content[0].text, 'sources': sources_used})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'API error: {str(e)}'}), 500
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 if __name__ == '__main__':
