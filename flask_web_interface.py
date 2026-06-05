@@ -1682,8 +1682,8 @@ def ask_rules():
     cur.close()
     conn.close()
 
-    if not row:
-        return jsonify({'success': False, 'message': f'No rulebook found for {game_title}'}), 404
+    if not row or not row[0]:
+        return jsonify({'success': False, 'message': f'No rulebook found for {game_title} — try re-uploading'}), 404
 
     pdf_b64 = row[0]
 
@@ -1705,9 +1705,7 @@ def ask_rules():
     user_content = [
         {
             'type': 'document',
-            'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': pdf_b64},
-            'title': f'{game_title} Rulebook',
-            'cache_control': {'type': 'ephemeral'}
+            'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': pdf_b64}
         }
     ]
     question_text = question

@@ -211,7 +211,8 @@
                     }
                 },
                 error: function(xhr) {
-                    const msg = xhr.responseJSON ? xhr.responseJSON.message : 'Request failed';
+                    const msg = xhr.responseJSON ? xhr.responseJSON.message : ('HTTP ' + xhr.status + ' — check server logs');
+                    $('#sources-line').hide();
                     $('#answer-box').text('Error: ' + msg).show();
                 },
                 complete: function() {
