@@ -4,6 +4,8 @@ import os
 import random
 import anthropic
 import pdfplumber
+import requests
+import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
 
@@ -22,6 +24,88 @@ def require_login():
 
 selector_pool = []
 selector_choices = []
+
+_bgg_id_cache = {}
+
+STOP_WORDS = {'the','a','an','is','in','on','at','to','for','of','and','or',
+              'do','how','what','when','can','i','if','it','be','with','my',
+              'does','are','was','were','have','has','about','which','that'}
+
+def _bgg_fetch(url, params, timeout=8):
+    r = requests.get(url, params=params, timeout=timeout)
+    if r.status_code == 200:
+        return ET.fromstring(r.content)
+    return None
+
+def bgg_search_game_id(game_title):
+    if game_title in _bgg_id_cache:
+        return _bgg_id_cache[game_title]
+    for exact in ('1', '0'):
+        try:
+            root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/search',
+                              {'query': game_title, 'type': 'boardgame', 'exact': exact})
+            if root is not None:
+                items = root.findall('item')
+                if items:
+                    gid = items[0].get('id')
+                    _bgg_id_cache[game_title] = gid
+                    return gid
+        except Exception:
+            pass
+    return None
+
+def bgg_get_rules_forum_id(game_id):
+    try:
+        root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forumlist',
+                          {'id': game_id, 'type': 'thing'})
+        if root is None:
+            return None
+        forums = root.findall('forum')
+        for f in forums:
+            if 'rule' in f.get('title', '').lower():
+                return f.get('id')
+        return forums[0].get('id') if forums else None
+    except Exception:
+        return None
+
+def bgg_get_relevant_threads(forum_id, question, max_threads=5):
+    try:
+        root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forum',
+                          {'id': forum_id, 'page': 1})
+        if root is None:
+            return []
+        threads = root.findall('threads/thread')
+    except Exception:
+        return []
+
+    question_words = set(question.lower().split()) - STOP_WORDS
+    scored = []
+    for t in threads:
+        subject = t.get('subject', '')
+        score = len(question_words & set(subject.lower().split()))
+        scored.append((score, t.get('id'), subject))
+    scored.sort(reverse=True)
+
+    results = []
+    for score, thread_id, subject in scored[:max_threads]:
+        if score == 0 and len(results) >= 2:
+            break
+        try:
+            root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/thread',
+                              {'id': thread_id})
+            if root is None:
+                continue
+            posts = []
+            for article in root.findall('articles/article')[:8]:
+                body = article.find('body')
+                if body is not None and body.text:
+                    posts.append(body.text.strip()[:1200])
+            if posts:
+                results.append(f"Thread: {subject}\n\n" + '\n\n---\n\n'.join(posts))
+        except Exception:
+            continue
+    return results
+
 
 def get_db_connection():
     database_url = os.getenv('DATABASE_URL')
@@ -1609,10 +1693,32 @@ def ask_rules():
         return jsonify({'success': False, 'message': f'No rulebook found for {game_title}'}), 404
 
     rules_text = row[0]
+
+    # Fetch relevant BGG forum threads
+    bgg_section = ''
+    bgg_game_id = bgg_search_game_id(game_title)
+    if bgg_game_id:
+        forum_id = bgg_get_rules_forum_id(bgg_game_id)
+        if forum_id:
+            threads = bgg_get_relevant_threads(forum_id, question)
+            if threads:
+                bgg_section = '\n\n---\n\n'.join(threads)
+
+    system_text = (
+        f'You are a board game rules expert for "{game_title}". '
+        f'Answer questions using the rulebook and, where relevant, the BGG forum discussions provided. '
+        f'Cite which source supports your answer (rulebook or forum). '
+        f'If neither source addresses the question, say so.\n\n'
+        f'OFFICIAL RULEBOOK:\n{rules_text}'
+    )
+    if bgg_section:
+        system_text += f'\n\nBGG RULES FORUM DISCUSSIONS:\n{bgg_section}'
+
     api_key = os.getenv('ANTHROPIC_API_KEY')
     if not api_key:
         return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
 
+    sources_used = 'rulebook' + (' + BGG forum' if bgg_section else '')
     client = anthropic.Anthropic(api_key=api_key)
     try:
         response = client.messages.create(
@@ -1620,17 +1726,12 @@ def ask_rules():
             max_tokens=1024,
             system=[{
                 'type': 'text',
-                'text': (
-                    f'You are a board game rules expert for "{game_title}". '
-                    f'Answer questions based only on the rulebook text provided. '
-                    f'If the rules do not address the question, say so clearly.\n\n'
-                    f'RULEBOOK:\n{rules_text}'
-                ),
+                'text': system_text,
                 'cache_control': {'type': 'ephemeral'}
             }],
             messages=[{'role': 'user', 'content': question}]
         )
-        return jsonify({'success': True, 'answer': response.content[0].text})
+        return jsonify({'success': True, 'answer': response.content[0].text, 'sources': sources_used})
     except Exception as e:
         return jsonify({'success': False, 'message': f'API error: {str(e)}'}), 500
 

@@ -115,7 +115,8 @@
         <label for="question">Your question:</label>
         <textarea id="question" rows="3" placeholder="e.g. What happens when a player runs out of resources?"></textarea>
         <button id="ask-btn">Ask</button>
-        <div class="spinner" id="spinner">Thinking...</div>
+        <div class="spinner" id="spinner">Searching rulebook and BGG forum...</div>
+        <div id="sources-line" style="font-size:0.8em; color:#aaa; margin-top:8px; display:none;"></div>
         <div id="answer-box"></div>
     </div>
 
@@ -202,8 +203,10 @@
                 data: JSON.stringify({ game_title: selectedGame, question: question }),
                 success: function(data) {
                     if (data.success) {
+                        $('#sources-line').text('Sources: ' + data.sources).show();
                         $('#answer-box').text(data.answer).show();
                     } else {
+                        $('#sources-line').hide();
                         $('#answer-box').text('Error: ' + data.message).show();
                     }
                 },
