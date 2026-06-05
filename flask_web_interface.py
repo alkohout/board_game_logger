@@ -3,7 +3,7 @@ import psycopg2
 import os
 import random
 import anthropic
-import pdfplumber
+import base64
 import requests
 import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
@@ -1652,24 +1652,16 @@ def upload_rulebook():
     if not pdf_file.filename.lower().endswith('.pdf'):
         return jsonify({'success': False, 'message': 'File must be a PDF'}), 400
 
-    try:
-        pdf_file.stream.seek(0)
-        with pdfplumber.open(pdf_file.stream) as pdf:
-            pages_text = [page.extract_text() or '' for page in pdf.pages]
-        rules_text = '\n\n'.join(pages_text).strip()
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Could not read PDF: {str(e)}'}), 500
-
-    if not rules_text:
-        return jsonify({'success': False, 'message': 'No text found in PDF — it may be a scanned/image-only file'}), 400
+    pdf_file.stream.seek(0)
+    pdf_b64 = base64.standard_b64encode(pdf_file.stream.read()).decode('utf-8')
 
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO rulebooks (game_title, rules_text)
+        INSERT INTO rulebooks (game_title, pdf_data)
         VALUES (%s, %s)
-        ON CONFLICT (game_title) DO UPDATE SET rules_text = EXCLUDED.rules_text, uploaded_at = NOW()
-    """, (game_title, rules_text))
+        ON CONFLICT (game_title) DO UPDATE SET pdf_data = EXCLUDED.pdf_data, uploaded_at = NOW()
+    """, (game_title, pdf_b64))
     conn.commit()
     cur.close()
     conn.close()
@@ -1685,7 +1677,7 @@ def ask_rules():
 
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT rules_text FROM rulebooks WHERE game_title = %s", (game_title,))
+    cur.execute("SELECT pdf_data FROM rulebooks WHERE game_title = %s", (game_title,))
     row = cur.fetchone()
     cur.close()
     conn.close()
@@ -1693,7 +1685,7 @@ def ask_rules():
     if not row:
         return jsonify({'success': False, 'message': f'No rulebook found for {game_title}'}), 404
 
-    rules_text = row[0]
+    pdf_b64 = row[0]
 
     # Fetch relevant BGG forum threads
     bgg_section = ''
@@ -1705,19 +1697,23 @@ def ask_rules():
             if threads:
                 bgg_section = '\n\n---\n\n'.join(threads)
 
-    system_text = (
-        f'You are a board game rules expert for "{game_title}". '
-        f'Answer questions using the rulebook and, where relevant, the BGG forum discussions provided. '
-        f'Cite which source supports your answer (rulebook or forum). '
-        f'If neither source addresses the question, say so.\n\n'
-        f'OFFICIAL RULEBOOK:\n{rules_text}'
-    )
-    if bgg_section:
-        system_text += f'\n\nBGG RULES FORUM DISCUSSIONS:\n{bgg_section}'
-
     api_key = os.getenv('ANTHROPIC_API_KEY')
     if not api_key:
         return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
+
+    # Build user message: PDF document + optional BGG text + question
+    user_content = [
+        {
+            'type': 'document',
+            'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': pdf_b64},
+            'title': f'{game_title} Rulebook',
+            'cache_control': {'type': 'ephemeral'}
+        }
+    ]
+    question_text = question
+    if bgg_section:
+        question_text = f'BGG Rules Forum Discussions:\n{bgg_section}\n\nQuestion: {question}'
+    user_content.append({'type': 'text', 'text': question_text})
 
     sources_used = 'rulebook' + (' + BGG forum' if bgg_section else '')
     client = anthropic.Anthropic(api_key=api_key)
@@ -1725,12 +1721,13 @@ def ask_rules():
         response = client.messages.create(
             model='claude-opus-4-8',
             max_tokens=1024,
-            system=[{
-                'type': 'text',
-                'text': system_text,
-                'cache_control': {'type': 'ephemeral'}
-            }],
-            messages=[{'role': 'user', 'content': question}]
+            system=(
+                f'You are a board game rules expert for "{game_title}". '
+                f'Answer using the rulebook and BGG forum discussions provided. '
+                f'Cite which source supports your answer. '
+                f'If neither addresses the question, say so.'
+            ),
+            messages=[{'role': 'user', 'content': user_content}]
         )
         return jsonify({'success': True, 'answer': response.content[0].text, 'sources': sources_used})
     except Exception as e:
