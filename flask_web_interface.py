@@ -1823,15 +1823,13 @@ def ask_rules():
             max_tokens=1024,
             system=(
                 f'You are a board game rules expert for "{game_title}". '
-                f'Answer questions using these sources in priority order:\n'
-                f'1. The provided official rulebook (always the primary authority)\n'
-                f'2. Any BGG forum content explicitly provided\n'
-                f'3. Your training knowledge of community rule clarifications, BGG discussions, '
-                f'and published errata for this game\n\n'
-                f'For each answer, briefly indicate the source: '
-                f'"Rulebook p.X", "BGG community consensus", or "Common clarification" etc. '
-                f'If the rulebook and community disagree, note both positions. '
-                f'If you are uncertain, say so clearly.'
+                f'Answer questions directly without any preamble, disclaimers, or meta-commentary about your sources. '
+                f'Use these sources in priority order: '
+                f'(1) the provided rulebook, '
+                f'(2) any BGG forum content provided, '
+                f'(3) your training knowledge of community clarifications and BGG discussions for this game. '
+                f'Just give the answer. Briefly note the source inline where useful '
+                f'(e.g. "Rulebook p.12" or "BGG community consensus") but never open with an explanation of what you do or don\'t have.'
             ),
             messages=[{'role': 'user', 'content': user_content}]
         )
