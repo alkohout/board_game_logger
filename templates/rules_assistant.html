@@ -116,10 +116,13 @@
     </div>
 
     <div class="form-container" id="bgg-link-section" style="display:none;">
-        <h2>Link BGG Forum</h2>
-        <p style="color:#ccc; font-size:0.9em; margin:0 0 8px;">Find your game on BoardGameGeek and paste the URL to enable forum search.</p>
+        <h2>Add BGG Forum Content</h2>
+        <p style="color:#ccc; font-size:0.9em; margin:0 0 12px;">Go to your game's Rules forum on BoardGameGeek, open threads you find useful, and paste the text here. Saved once — used for every question.</p>
+        <label>BGG game page URL:</label>
         <input type="text" id="bgg_url_existing" placeholder="https://boardgamegeek.com/boardgame/370591/imperium-horizons">
-        <button class="upload-btn" id="set-bgg-btn">Save BGG Link</button>
+        <label style="margin-top:8px;">Forum thread content (paste from BGG):</label>
+        <textarea id="bgg_forum_paste" rows="10" placeholder="Paste BGG forum threads here — copy the full text of any rules discussions you want the AI to reference."></textarea>
+        <button class="upload-btn" id="set-bgg-btn">Save</button>
         <div id="bgg-link-status" class="status"></div>
     </div>
 
@@ -252,96 +255,43 @@
             });
         });
 
-        async function fetchBggThreadsFromBrowser(gameId) {
-            const parser = new DOMParser();
-
-            // Get forum list
-            const flResp = await fetch(`https://boardgamegeek.com/xmlapi2/forumlist?id=${gameId}&type=thing`);
-            if (!flResp.ok) return null;
-            const flXml = parser.parseFromString(await flResp.text(), 'text/xml');
-            const forums = Array.from(flXml.querySelectorAll('forum'));
-            if (!forums.length) return null;
-
-            // Pick rules forum or first forum
-            let forum = forums.find(f => (f.getAttribute('title') || '').toLowerCase().includes('rule')) || forums[0];
-            const forumId = forum.getAttribute('id');
-
-            // Get thread list
-            const fResp = await fetch(`https://boardgamegeek.com/xmlapi2/forum?id=${forumId}&page=1`);
-            if (!fResp.ok) return null;
-            const fXml = parser.parseFromString(await fResp.text(), 'text/xml');
-            const threads = Array.from(fXml.querySelectorAll('thread')).slice(0, 10);
-
-            // Fetch each thread
-            const parts = [];
-            for (const t of threads) {
-                const tid = t.getAttribute('id');
-                const subject = t.getAttribute('subject') || '';
-                try {
-                    const tResp = await fetch(`https://boardgamegeek.com/xmlapi2/thread?id=${tid}`);
-                    if (!tResp.ok) continue;
-                    const tXml = parser.parseFromString(await tResp.text(), 'text/xml');
-                    const posts = Array.from(tXml.querySelectorAll('article')).slice(0, 6)
-                        .map(a => (a.querySelector('body') || {textContent:''}).textContent.substring(0, 1200))
-                        .filter(p => p.trim());
-                    if (posts.length) parts.push(`Thread: ${subject}\n\n${posts.join('\n\n---\n\n')}`);
-                } catch(e) {}
-            }
-            return parts.length ? parts.join('\n\n===\n\n') : null;
-        }
-
-        $('#set-bgg-btn').on('click', async function() {
+        $('#set-bgg-btn').on('click', function() {
             const bggUrl = $('#bgg_url_existing').val().trim();
+            const forumText = $('#bgg_forum_paste').val().trim();
             if (!selectedGame) { alert('Select a game first.'); return; }
-            if (!bggUrl) { alert('Paste a BGG URL.'); return; }
+            if (!forumText) { alert('Paste some BGG forum content first.'); return; }
 
-            const m = bggUrl.match(/\/boardgame\/(\d+)/);
-            if (!m) { $('#bgg-link-status').text('Could not find game ID in URL').addClass('err'); return; }
-            const gameId = m[1];
+            $('#set-bgg-btn').prop('disabled', true).text('Saving...');
 
-            $('#set-bgg-btn').prop('disabled', true).text('Fetching forum threads...');
-            $('#bgg-link-status').text('Fetching BGG forum threads from your browser — this may take 20–30 seconds...').removeClass('err ok');
-
-            try {
-                // Step 1: Save BGG ID
-                const idResp = await fetch('/set_bgg_url', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ game_title: selectedGame, bgg_url: bggUrl })
-                });
-                const idData = await idResp.json();
-                if (!idData.success) {
-                    $('#bgg-link-status').text(idData.message).addClass('err');
-                    return;
-                }
-
-                // Step 2: Fetch threads from browser (bypasses server IP block)
-                const threadsText = await fetchBggThreadsFromBrowser(gameId);
-                if (!threadsText) {
-                    $('#bgg-link-status').text('BGG ID saved but could not fetch forum threads. Try again later.').addClass('err');
-                    return;
-                }
-
-                // Step 3: Cache threads on server
-                const cacheResp = await fetch('/cache_bgg_threads', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ game_title: selectedGame, threads_text: threadsText })
-                });
-                const cacheData = await cacheResp.json();
-                if (cacheData.success) {
-                    $('#bgg-link-status').text('BGG forum linked and threads cached!').removeClass('err').addClass('ok');
-                    $('#bgg-badge').text('BGG forum linked').removeClass('no-rulebook').addClass('has-rulebook');
-                    $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
-                    $('#bgg-link-section').hide();
-                } else {
-                    $('#bgg-link-status').text('Threads fetched but cache failed: ' + cacheData.message).addClass('err');
-                }
-            } catch(e) {
-                $('#bgg-link-status').text('Error: ' + e.message).addClass('err');
-            } finally {
-                $('#set-bgg-btn').prop('disabled', false).text('Save BGG Link');
+            // Save BGG URL (optional) and forum content together
+            const saves = [];
+            if (bggUrl) {
+                saves.push($.ajax({
+                    url: '/set_bgg_url', type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ game_title: selectedGame, bgg_url: bggUrl })
+                }));
             }
+            saves.push($.ajax({
+                url: '/cache_bgg_threads', type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ game_title: selectedGame, threads_text: forumText })
+            }));
+
+            Promise.all(saves)
+                .then(function() {
+                    $('#bgg-link-status').text('Saved!').removeClass('err').addClass('ok');
+                    $('#bgg-badge').text('BGG forum content added').removeClass('no-rulebook').addClass('has-rulebook');
+                    $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
+                    $('#bgg-forum-paste').val('');
+                    $('#bgg-link-section').hide();
+                })
+                .catch(function() {
+                    $('#bgg-link-status').text('Save failed — try again').removeClass('ok').addClass('err');
+                })
+                .always(function() {
+                    $('#set-bgg-btn').prop('disabled', false).text('Save');
+                });
         });
     </script>
 </body>
