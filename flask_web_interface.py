@@ -3,6 +3,7 @@ import psycopg2
 import os
 import re
 import random
+import time
 import anthropic
 import base64
 import requests
@@ -32,10 +33,17 @@ STOP_WORDS = {'the','a','an','is','in','on','at','to','for','of','and','or',
               'do','how','what','when','can','i','if','it','be','with','my',
               'does','are','was','were','have','has','about','which','that'}
 
-def _bgg_fetch(url, params, timeout=8):
-    r = requests.get(url, params=params, timeout=timeout)
-    if r.status_code == 200:
-        return ET.fromstring(r.content)
+def _bgg_fetch(url, params, timeout=10):
+    for attempt in range(4):
+        try:
+            r = requests.get(url, params=params, timeout=timeout)
+            if r.status_code == 200:
+                return ET.fromstring(r.content)
+            if r.status_code == 202:
+                time.sleep(2 + attempt)
+                continue
+        except Exception:
+            return None
     return None
 
 def bgg_search_game_id(game_title):
@@ -89,8 +97,6 @@ def bgg_get_relevant_threads(forum_id, question, max_threads=5):
 
     results = []
     for score, thread_id, subject in scored[:max_threads]:
-        if score == 0 and len(results) >= 2:
-            break
         try:
             root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/thread',
                               {'id': thread_id})
