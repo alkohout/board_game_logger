@@ -1761,6 +1761,24 @@ def set_bgg_url():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/cache_bgg_threads', methods=['POST'])
+def cache_bgg_threads():
+    try:
+        data = request.get_json()
+        game_title = (data.get('game_title') or '').strip()
+        threads_text = (data.get('threads_text') or '').strip()
+        if not game_title or not threads_text:
+            return jsonify({'success': False, 'message': 'Missing data'}), 400
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE rulebooks SET bgg_forum_cache = %s WHERE game_title = %s", (threads_text, game_title))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/ask_rules', methods=['POST'])
 def ask_rules():
     try:
@@ -1772,7 +1790,7 @@ def ask_rules():
 
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT pdf_data, bgg_game_id FROM rulebooks WHERE game_title = %s", (game_title,))
+        cur.execute("SELECT pdf_data, bgg_forum_cache FROM rulebooks WHERE game_title = %s", (game_title,))
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -1780,19 +1798,7 @@ def ask_rules():
         if not row or not row[0]:
             return jsonify({'success': False, 'message': f'No rulebook found for {game_title} — try re-uploading'}), 404
 
-        pdf_b64, stored_bgg_id = row[0], row[1]
-        if stored_bgg_id:
-            _bgg_id_cache[game_title] = stored_bgg_id
-
-        # Fetch relevant BGG forum threads
-        bgg_section = ''
-        bgg_game_id = stored_bgg_id or bgg_search_game_id(game_title)
-        if bgg_game_id:
-            forum_id = bgg_get_rules_forum_id(bgg_game_id)
-            if forum_id:
-                threads = bgg_get_relevant_threads(forum_id, question)
-                if threads:
-                    bgg_section = '\n\n---\n\n'.join(threads)
+        pdf_b64, bgg_section = row[0], (row[1] or '')
 
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
