@@ -106,20 +106,18 @@
     </div>
 
     <div class="form-container" id="upload-section" style="display:none;">
-        <h2>Upload Rulebook</h2>
+        <h2>Upload Rulebook PDF</h2>
         <label for="pdf_file">PDF file:</label>
         <input type="file" id="pdf_file" accept=".pdf">
-        <label for="bgg_url" style="margin-top:8px;">BGG game page URL (for forum search):</label>
-        <input type="text" id="bgg_url" placeholder="https://boardgamegeek.com/boardgame/370591/imperium-horizons">
         <button class="upload-btn" id="upload-btn">Upload</button>
         <div id="upload-status" class="status"></div>
     </div>
 
     <div class="form-container" id="bgg-link-section" style="display:none;">
-        <h2>Add Specific BGG Threads (optional)</h2>
+        <h2>Add BGG Thread Content (optional)</h2>
         <p style="color:#ccc; font-size:0.9em; margin:0 0 12px;">
-            The AI already uses its training knowledge of BGG community discussions for this game.
-            If there's a specific thread or ruling you want it to reference exactly, paste it here.
+            The AI already uses its training knowledge of BGG discussions for this game.
+            Paste specific threads here if you want it to reference them exactly.
         </p>
         <textarea id="bgg_forum_paste" rows="8" placeholder="Paste specific BGG thread text here (optional)..."></textarea>
         <button class="upload-btn" id="set-bgg-btn">Save</button>
@@ -170,7 +168,7 @@
             }
 
             $('#upload-section').show();
-            $('#bgg-link-section').toggle(gameHasRulebook && !gameHasBgg);
+            $('#bgg-link-section').show();
             $('#answer-box').hide().text('');
             $('#sources-line').hide();
             $('#upload-status').text('').removeClass('ok err');
@@ -200,11 +198,8 @@
                         $('#game_select option[value="' + selectedGame + '"]').attr('data-has-rulebook', 'true');
                         $('#ask-section').show();
                         if (data.bgg_linked) {
-                            $('#bgg-badge').text('BGG forum linked').removeClass('no-rulebook').addClass('has-rulebook');
+                            $('#bgg-badge').text('BGG content added').removeClass('no-rulebook').addClass('has-rulebook');
                             $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
-                            $('#bgg-link-section').hide();
-                        } else {
-                            $('#bgg-link-section').show();
                         }
                     } else {
                         $('#upload-status').text(data.message).removeClass('ok').addClass('err');
