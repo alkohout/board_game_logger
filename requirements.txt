@@ -2,5 +2,4 @@ flask
 psycopg2-binary
 python-dotenv
 anthropic
-requests
 gunicorn

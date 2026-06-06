@@ -1,13 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 import psycopg2
 import os
-import re
 import random
-import time
 import anthropic
 import base64
-import requests
-import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
 
@@ -27,94 +23,6 @@ def require_login():
 selector_pool = []
 selector_choices = []
 
-_bgg_id_cache = {}
-
-STOP_WORDS = {'the','a','an','is','in','on','at','to','for','of','and','or',
-              'do','how','what','when','can','i','if','it','be','with','my',
-              'does','are','was','were','have','has','about','which','that'}
-
-_BGG_HEADERS = {'User-Agent': 'BoardGameLogger/1.0 (personal app)'}
-
-def _bgg_fetch(url, params, timeout=10):
-    for attempt in range(4):
-        try:
-            r = requests.get(url, params=params, timeout=timeout, headers=_BGG_HEADERS)
-            if r.status_code == 200:
-                return ET.fromstring(r.content)
-            if r.status_code == 202:
-                time.sleep(2 + attempt)
-                continue
-            return None
-        except Exception:
-            return None
-    return None
-
-def bgg_search_game_id(game_title):
-    if game_title in _bgg_id_cache:
-        return _bgg_id_cache[game_title]
-    for exact in ('1', '0'):
-        try:
-            root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/search',
-                              {'query': game_title, 'type': 'boardgame', 'exact': exact})
-            if root is not None:
-                items = root.findall('item')
-                if items:
-                    gid = items[0].get('id')
-                    _bgg_id_cache[game_title] = gid
-                    return gid
-        except Exception:
-            pass
-    return None
-
-def bgg_get_rules_forum_id(game_id):
-    try:
-        root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forumlist',
-                          {'id': game_id, 'type': 'thing'})
-        if root is None:
-            return None
-        forums = root.findall('forum')
-        for f in forums:
-            if 'rule' in f.get('title', '').lower():
-                return f.get('id')
-        return forums[0].get('id') if forums else None
-    except Exception:
-        return None
-
-def bgg_get_relevant_threads(forum_id, question, max_threads=5):
-    try:
-        root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forum',
-                          {'id': forum_id, 'page': 1})
-        if root is None:
-            return []
-        threads = root.findall('threads/thread')
-    except Exception:
-        return []
-
-    question_words = set(question.lower().split()) - STOP_WORDS
-    scored = []
-    for t in threads:
-        subject = t.get('subject', '')
-        score = len(question_words & set(subject.lower().split()))
-        scored.append((score, t.get('id'), subject))
-    scored.sort(reverse=True)
-
-    results = []
-    for score, thread_id, subject in scored[:max_threads]:
-        try:
-            root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/thread',
-                              {'id': thread_id})
-            if root is None:
-                continue
-            posts = []
-            for article in root.findall('articles/article')[:8]:
-                body = article.find('body')
-                if body is not None and body.text:
-                    posts.append(body.text.strip()[:1200])
-            if posts:
-                results.append(f"Thread: {subject}\n\n" + '\n\n---\n\n'.join(posts))
-        except Exception:
-            continue
-    return results
 
 
 def get_db_connection():
@@ -1644,7 +1552,7 @@ def rules_assistant():
     cur = conn.cursor()
     cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
     game_titles = [row[0] for row in cur.fetchall()]
-    cur.execute("SELECT game_title, bgg_game_id FROM rulebooks WHERE pdf_data IS NOT NULL")
+    cur.execute("SELECT game_title, bgg_forum_cache FROM rulebooks WHERE pdf_data IS NOT NULL")
     rulebook_rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -1652,42 +1560,6 @@ def rules_assistant():
     has_bgg = {g: any(r[0] == g and r[1] for r in rulebook_rows) for g in game_titles}
     return render_template('rules_assistant.html', game_titles=game_titles, has_rulebook=has_rulebook, has_bgg=has_bgg)
 
-@app.route('/debug_bgg/<path:game_title>')
-def debug_bgg(game_title):
-    out = {}
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT bgg_game_id FROM rulebooks WHERE game_title = %s", (game_title,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    out['stored_bgg_id'] = row[0] if row else None
-
-    bgg_id = row[0] if (row and row[0]) else bgg_search_game_id(game_title)
-    out['bgg_id_used'] = bgg_id
-    if not bgg_id:
-        return jsonify(out)
-
-    root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forumlist', {'id': bgg_id, 'type': 'thing'})
-    if root is None:
-        out['forums'] = 'BGG returned None — likely 202 timeout or blocked'
-        return jsonify(out)
-    forums = [{'id': f.get('id'), 'title': f.get('title')} for f in root.findall('forum')]
-    out['forums'] = forums
-
-    forum_id = bgg_get_rules_forum_id(bgg_id)
-    out['rules_forum_id'] = forum_id
-    if not forum_id:
-        return jsonify(out)
-
-    root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forum', {'id': forum_id, 'page': 1})
-    if root is None:
-        out['threads'] = 'BGG returned None for forum page'
-        return jsonify(out)
-    threads = root.findall('threads/thread')
-    out['thread_count'] = len(threads)
-    out['sample_threads'] = [{'id': t.get('id'), 'subject': t.get('subject')} for t in threads[:5]]
-    return jsonify(out)
 
 @app.route('/debug_rulebooks')
 def debug_rulebooks():
@@ -1710,13 +1582,6 @@ def upload_rulebook():
     if not pdf_file.filename.lower().endswith('.pdf'):
         return jsonify({'success': False, 'message': 'File must be a PDF'}), 400
 
-    bgg_url = request.form.get('bgg_url', '').strip()
-    bgg_id = None
-    if bgg_url:
-        m = re.search(r'/boardgame/(\d+)', bgg_url)
-        if m:
-            bgg_id = m.group(1)
-
     pdf_file.stream.seek(0)
     pdf_b64 = base64.standard_b64encode(pdf_file.stream.read()).decode('utf-8')
 
@@ -1724,42 +1589,19 @@ def upload_rulebook():
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO rulebooks (game_title, pdf_data, bgg_game_id)
-            VALUES (%s, %s, %s)
+            INSERT INTO rulebooks (game_title, pdf_data)
+            VALUES (%s, %s)
             ON CONFLICT (game_title) DO UPDATE
                 SET pdf_data = EXCLUDED.pdf_data,
-                    bgg_game_id = COALESCE(EXCLUDED.bgg_game_id, rulebooks.bgg_game_id),
                     uploaded_at = NOW()
-        """, (game_title, pdf_b64, bgg_id))
+        """, (game_title, pdf_b64))
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         return jsonify({'success': False, 'message': f'DB error: {str(e)}'}), 500
-    return jsonify({'success': True, 'message': f'Rulebook saved for {game_title}', 'bgg_linked': bgg_id is not None})
+    return jsonify({'success': True, 'message': f'Rulebook saved for {game_title}'})
 
-@app.route('/set_bgg_url', methods=['POST'])
-def set_bgg_url():
-    try:
-        data = request.get_json()
-        game_title = (data.get('game_title') or '').strip()
-        bgg_url = (data.get('bgg_url') or '').strip()
-        if not game_title or not bgg_url:
-            return jsonify({'success': False, 'message': 'Game title and BGG URL required'}), 400
-        m = re.search(r'/boardgame/(\d+)', bgg_url)
-        if not m:
-            return jsonify({'success': False, 'message': 'Could not find game ID in URL — paste the full BGG game page URL'}), 400
-        bgg_id = m.group(1)
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE rulebooks SET bgg_game_id = %s WHERE game_title = %s", (bgg_id, game_title))
-        conn.commit()
-        cur.close()
-        conn.close()
-        _bgg_id_cache[game_title] = bgg_id
-        return jsonify({'success': True, 'bgg_id': bgg_id})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/clear_bgg_cache', methods=['POST'])
 def clear_bgg_cache():
