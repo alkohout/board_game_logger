@@ -116,12 +116,12 @@
     </div>
 
     <div class="form-container" id="bgg-link-section" style="display:none;">
-        <h2>Add BGG Forum Content</h2>
-        <p style="color:#ccc; font-size:0.9em; margin:0 0 12px;">Go to your game's Rules forum on BoardGameGeek, open threads you find useful, and paste the text here. Saved once — used for every question.</p>
-        <label>BGG game page URL:</label>
-        <input type="text" id="bgg_url_existing" placeholder="https://boardgamegeek.com/boardgame/370591/imperium-horizons">
-        <label style="margin-top:8px;">Forum thread content (paste from BGG):</label>
-        <textarea id="bgg_forum_paste" rows="10" placeholder="Paste BGG forum threads here — copy the full text of any rules discussions you want the AI to reference."></textarea>
+        <h2>Add Specific BGG Threads (optional)</h2>
+        <p style="color:#ccc; font-size:0.9em; margin:0 0 12px;">
+            The AI already uses its training knowledge of BGG community discussions for this game.
+            If there's a specific thread or ruling you want it to reference exactly, paste it here.
+        </p>
+        <textarea id="bgg_forum_paste" rows="8" placeholder="Paste specific BGG thread text here (optional)..."></textarea>
         <button class="upload-btn" id="set-bgg-btn">Save</button>
         <div id="bgg-link-status" class="status"></div>
     </div>
@@ -256,42 +256,31 @@
         });
 
         $('#set-bgg-btn').on('click', function() {
-            const bggUrl = $('#bgg_url_existing').val().trim();
             const forumText = $('#bgg_forum_paste').val().trim();
             if (!selectedGame) { alert('Select a game first.'); return; }
-            if (!forumText) { alert('Paste some BGG forum content first.'); return; }
-
+            if (!forumText) { alert('Paste some BGG thread text first.'); return; }
             $('#set-bgg-btn').prop('disabled', true).text('Saving...');
-
-            // Save BGG URL (optional) and forum content together
-            const saves = [];
-            if (bggUrl) {
-                saves.push($.ajax({
-                    url: '/set_bgg_url', type: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ game_title: selectedGame, bgg_url: bggUrl })
-                }));
-            }
-            saves.push($.ajax({
+            $.ajax({
                 url: '/cache_bgg_threads', type: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({ game_title: selectedGame, threads_text: forumText })
-            }));
-
-            Promise.all(saves)
-                .then(function() {
-                    $('#bgg-link-status').text('Saved!').removeClass('err').addClass('ok');
-                    $('#bgg-badge').text('BGG forum content added').removeClass('no-rulebook').addClass('has-rulebook');
-                    $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
-                    $('#bgg-forum-paste').val('');
-                    $('#bgg-link-section').hide();
-                })
-                .catch(function() {
+                data: JSON.stringify({ game_title: selectedGame, threads_text: forumText }),
+                success: function(data) {
+                    if (data.success) {
+                        $('#bgg-link-status').text('Saved!').removeClass('err').addClass('ok');
+                        $('#bgg-badge').text('Extra BGG content added').removeClass('no-rulebook').addClass('has-rulebook');
+                        $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
+                        $('#bgg_forum_paste').val('');
+                    } else {
+                        $('#bgg-link-status').text(data.message).addClass('err');
+                    }
+                },
+                error: function() {
                     $('#bgg-link-status').text('Save failed — try again').removeClass('ok').addClass('err');
-                })
-                .always(function() {
+                },
+                complete: function() {
                     $('#set-bgg-btn').prop('disabled', false).text('Save');
-                });
+                }
+            });
         });
     </script>
 </body>

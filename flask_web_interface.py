@@ -1816,16 +1816,22 @@ def ask_rules():
             question_text = f'BGG Rules Forum Discussions:\n{bgg_section}\n\nQuestion: {question}'
         user_content.append({'type': 'text', 'text': question_text})
 
-        sources_used = 'rulebook' + (' + BGG forum' if bgg_section else '')
+        sources_used = 'rulebook' + (' + pasted BGG content' if bgg_section else ' + training knowledge')
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model='claude-opus-4-8',
             max_tokens=1024,
             system=(
                 f'You are a board game rules expert for "{game_title}". '
-                f'Answer using the rulebook and BGG forum discussions provided. '
-                f'Cite which source supports your answer. '
-                f'If neither addresses the question, say so.'
+                f'Answer questions using these sources in priority order:\n'
+                f'1. The provided official rulebook (always the primary authority)\n'
+                f'2. Any BGG forum content explicitly provided\n'
+                f'3. Your training knowledge of community rule clarifications, BGG discussions, '
+                f'and published errata for this game\n\n'
+                f'For each answer, briefly indicate the source: '
+                f'"Rulebook p.X", "BGG community consensus", or "Common clarification" etc. '
+                f'If the rulebook and community disagree, note both positions. '
+                f'If you are uncertain, say so clearly.'
             ),
             messages=[{'role': 'user', 'content': user_content}]
         )
