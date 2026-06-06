@@ -1771,7 +1771,14 @@ def cache_bgg_threads():
             return jsonify({'success': False, 'message': 'Missing data'}), 400
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE rulebooks SET bgg_forum_cache = %s WHERE game_title = %s", (threads_text, game_title))
+        cur.execute("""
+            UPDATE rulebooks
+            SET bgg_forum_cache = CASE
+                WHEN bgg_forum_cache IS NULL OR bgg_forum_cache = '' THEN %s
+                ELSE bgg_forum_cache || E'\n\n===\n\n' || %s
+            END
+            WHERE game_title = %s
+        """, (threads_text, threads_text, game_title))
         conn.commit()
         cur.close()
         conn.close()
