@@ -1761,6 +1761,23 @@ def set_bgg_url():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/clear_bgg_cache', methods=['POST'])
+def clear_bgg_cache():
+    try:
+        data = request.get_json()
+        game_title = (data.get('game_title') or '').strip()
+        if not game_title:
+            return jsonify({'success': False, 'message': 'Game title required'}), 400
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE rulebooks SET bgg_forum_cache = NULL WHERE game_title = %s", (game_title,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/cache_bgg_threads', methods=['POST'])
 def cache_bgg_threads():
     try:

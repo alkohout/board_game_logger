@@ -121,6 +121,7 @@
         </p>
         <textarea id="bgg_forum_paste" rows="8" placeholder="Paste specific BGG thread text here (optional)..."></textarea>
         <button class="upload-btn" id="set-bgg-btn">Save</button>
+        <button id="clear-bgg-btn" style="background-color:#c0392b;">Clear All</button>
         <div id="bgg-link-status" class="status"></div>
     </div>
 
@@ -274,6 +275,25 @@
                 },
                 complete: function() {
                     $('#set-bgg-btn').prop('disabled', false).text('Save');
+                }
+            });
+        });
+
+        $('#clear-bgg-btn').on('click', function() {
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            if (!confirm('Clear all pasted BGG content for ' + selectedGame + '?')) return;
+            $.ajax({
+                url: '/clear_bgg_cache', type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ game_title: selectedGame }),
+                success: function(data) {
+                    if (data.success) {
+                        $('#bgg-link-status').text('Cleared.').removeClass('err').addClass('ok');
+                        $('#bgg-badge').text('No BGG forum link').removeClass('has-rulebook').addClass('no-rulebook');
+                        $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'false');
+                    } else {
+                        $('#bgg-link-status').text(data.message).addClass('err');
+                    }
                 }
             });
         });
