@@ -1552,8 +1552,13 @@ def rules_assistant():
     cur = conn.cursor()
     cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
     game_titles = [row[0] for row in cur.fetchall()]
-    cur.execute("SELECT game_title, bgg_forum_cache FROM rulebooks WHERE pdf_data IS NOT NULL")
-    rulebook_rows = cur.fetchall()
+    try:
+        cur.execute("SELECT game_title, bgg_forum_cache FROM rulebooks WHERE pdf_data IS NOT NULL")
+        rulebook_rows = cur.fetchall()
+    except Exception:
+        conn.rollback()
+        cur.execute("SELECT game_title FROM rulebooks WHERE pdf_data IS NOT NULL")
+        rulebook_rows = [(r[0], None) for r in cur.fetchall()]
     cur.close()
     conn.close()
     has_rulebook = {g: any(r[0] == g for r in rulebook_rows) for g in game_titles}
