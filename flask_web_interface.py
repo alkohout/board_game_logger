@@ -33,15 +33,18 @@ STOP_WORDS = {'the','a','an','is','in','on','at','to','for','of','and','or',
               'do','how','what','when','can','i','if','it','be','with','my',
               'does','are','was','were','have','has','about','which','that'}
 
+_BGG_HEADERS = {'User-Agent': 'BoardGameLogger/1.0 (personal app)'}
+
 def _bgg_fetch(url, params, timeout=10):
     for attempt in range(4):
         try:
-            r = requests.get(url, params=params, timeout=timeout)
+            r = requests.get(url, params=params, timeout=timeout, headers=_BGG_HEADERS)
             if r.status_code == 200:
                 return ET.fromstring(r.content)
             if r.status_code == 202:
                 time.sleep(2 + attempt)
                 continue
+            return None
         except Exception:
             return None
     return None
@@ -1648,6 +1651,43 @@ def rules_assistant():
     has_rulebook = {g: any(r[0] == g for r in rulebook_rows) for g in game_titles}
     has_bgg = {g: any(r[0] == g and r[1] for r in rulebook_rows) for g in game_titles}
     return render_template('rules_assistant.html', game_titles=game_titles, has_rulebook=has_rulebook, has_bgg=has_bgg)
+
+@app.route('/debug_bgg/<path:game_title>')
+def debug_bgg(game_title):
+    out = {}
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT bgg_game_id FROM rulebooks WHERE game_title = %s", (game_title,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    out['stored_bgg_id'] = row[0] if row else None
+
+    bgg_id = row[0] if (row and row[0]) else bgg_search_game_id(game_title)
+    out['bgg_id_used'] = bgg_id
+    if not bgg_id:
+        return jsonify(out)
+
+    root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forumlist', {'id': bgg_id, 'type': 'thing'})
+    if root is None:
+        out['forums'] = 'BGG returned None — likely 202 timeout or blocked'
+        return jsonify(out)
+    forums = [{'id': f.get('id'), 'title': f.get('title')} for f in root.findall('forum')]
+    out['forums'] = forums
+
+    forum_id = bgg_get_rules_forum_id(bgg_id)
+    out['rules_forum_id'] = forum_id
+    if not forum_id:
+        return jsonify(out)
+
+    root = _bgg_fetch('https://boardgamegeek.com/xmlapi2/forum', {'id': forum_id, 'page': 1})
+    if root is None:
+        out['threads'] = 'BGG returned None for forum page'
+        return jsonify(out)
+    threads = root.findall('threads/thread')
+    out['thread_count'] = len(threads)
+    out['sample_threads'] = [{'id': t.get('id'), 'subject': t.get('subject')} for t in threads[:5]]
+    return jsonify(out)
 
 @app.route('/debug_rulebooks')
 def debug_rulebooks():
