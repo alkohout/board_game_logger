@@ -1704,7 +1704,19 @@ def ask_rules():
             ),
             messages=[{'role': 'user', 'content': user_content}]
         )
-        return jsonify({'success': True, 'answer': response.content[0].text, 'sources': sources_used})
+        # Haiku pricing: $0.80/MTok input, $4.00/MTok output
+        input_cost  = response.usage.input_tokens  * 0.80 / 1_000_000
+        output_cost = response.usage.output_tokens * 4.00 / 1_000_000
+        cost_usd = input_cost + output_cost
+        cost_nzd = cost_usd * 1.68  # approximate rate
+
+        return jsonify({
+            'success': True,
+            'answer': response.content[0].text,
+            'sources': sources_used,
+            'cost_nzd': round(cost_nzd, 4),
+            'cost_usd': round(cost_usd, 4)
+        })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 

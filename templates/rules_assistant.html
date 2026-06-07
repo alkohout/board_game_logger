@@ -112,6 +112,7 @@
         <div class="spinner" id="spinner">Thinking...</div>
         <div id="sources-line" style="font-size:0.8em; color:#aaa; margin-top:8px; display:none;"></div>
         <div id="answer-box"></div>
+        <div id="cost-line" style="font-size:0.75em; color:#666; margin-top:6px; display:none;"></div>
     </div>
 
     <div class="form-container" id="upload-section" style="display:none;">
@@ -212,6 +213,7 @@
             $('#ask-btn').prop('disabled', true);
             $('#spinner').show();
             $('#answer-box').hide().text('');
+            $('#cost-line').hide();
 
             $.ajax({
                 url: '/ask_rules',
@@ -222,6 +224,7 @@
                     if (data.success) {
                         $('#sources-line').text('Sources: ' + data.sources).show();
                         $('#answer-box').text(data.answer).show();
+                        $('#cost-line').text('Cost: NZ$' + data.cost_nzd.toFixed(4) + ' (US$' + data.cost_usd.toFixed(4) + ' approx)').show();
                     } else {
                         $('#sources-line').hide();
                         $('#answer-box').text('Error: ' + data.message).show();
