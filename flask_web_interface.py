@@ -1708,7 +1708,8 @@ def ask_rules():
         input_cost  = response.usage.input_tokens  * 0.80 / 1_000_000
         output_cost = response.usage.output_tokens * 4.00 / 1_000_000
         cost_usd = input_cost + output_cost
-        cost_nzd = cost_usd * 1.68  # approximate rate
+        nzd_rate = float(os.getenv('NZD_RATE', '1.68'))
+        cost_nzd = cost_usd * nzd_rate
 
         return jsonify({
             'success': True,
