@@ -101,8 +101,17 @@
 
         <div id="rulebook-status" style="margin-bottom:4px; display:none;">
             <span id="rulebook-badge" class="rulebook-indicator"></span>
-            <span id="bgg-badge" class="rulebook-indicator"></span>
         </div>
+    </div>
+
+    <div class="form-container" id="ask-section" style="display:none;">
+        <h2>Ask a Question</h2>
+        <label for="question">Your question:</label>
+        <textarea id="question" rows="3" placeholder="e.g. What happens when a player runs out of resources?"></textarea>
+        <button id="ask-btn">Ask</button>
+        <div class="spinner" id="spinner">Thinking...</div>
+        <div id="sources-line" style="font-size:0.8em; color:#aaa; margin-top:8px; display:none;"></div>
+        <div id="answer-box"></div>
     </div>
 
     <div class="form-container" id="upload-section" style="display:none;">
@@ -125,16 +134,6 @@
         <div id="bgg-link-status" class="status"></div>
     </div>
 
-    <div class="form-container" id="ask-section" style="display:none;">
-        <h2>Ask a Question</h2>
-        <label for="question">Your question:</label>
-        <textarea id="question" rows="3" placeholder="e.g. What happens when a player runs out of resources?"></textarea>
-        <button id="ask-btn">Ask</button>
-        <div class="spinner" id="spinner">Searching rulebook and BGG forum...</div>
-        <div id="sources-line" style="font-size:0.8em; color:#aaa; margin-top:8px; display:none;"></div>
-        <div id="answer-box"></div>
-    </div>
-
     <script>
         let selectedGame = '';
         let gameHasRulebook = false;
@@ -143,7 +142,6 @@
             selectedGame = $(this).val();
             const opt = $(this).find('option:selected');
             gameHasRulebook = opt.attr('data-has-rulebook') === 'true';
-            const gameHasBgg = opt.attr('data-has-bgg') === 'true';
 
             if (!selectedGame) {
                 $('#rulebook-status').hide();
@@ -160,12 +158,6 @@
             } else {
                 $('#rulebook-badge').text('No rulebook — upload one below').removeClass('has-rulebook').addClass('no-rulebook');
                 $('#ask-section').hide();
-            }
-
-            if (gameHasBgg) {
-                $('#bgg-badge').text('BGG forum linked').removeClass('no-rulebook').addClass('has-rulebook');
-            } else {
-                $('#bgg-badge').text('No BGG forum link').removeClass('has-rulebook').addClass('no-rulebook');
             }
 
             $('#upload-section').show();
@@ -198,10 +190,6 @@
                         $('#rulebook-badge').text('Rulebook uploaded').removeClass('no-rulebook').addClass('has-rulebook');
                         $('#game_select option[value="' + selectedGame + '"]').attr('data-has-rulebook', 'true');
                         $('#ask-section').show();
-                        if (data.bgg_linked) {
-                            $('#bgg-badge').text('BGG content added').removeClass('no-rulebook').addClass('has-rulebook');
-                            $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
-                        }
                     } else {
                         $('#upload-status').text(data.message).removeClass('ok').addClass('err');
                     }
@@ -263,8 +251,6 @@
                 success: function(data) {
                     if (data.success) {
                         $('#bgg-link-status').text('Saved!').removeClass('err').addClass('ok');
-                        $('#bgg-badge').text('Extra BGG content added').removeClass('no-rulebook').addClass('has-rulebook');
-                        $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'true');
                         $('#bgg_forum_paste').val('');
                     } else {
                         $('#bgg-link-status').text(data.message).addClass('err');
@@ -289,8 +275,6 @@
                 success: function(data) {
                     if (data.success) {
                         $('#bgg-link-status').text('Cleared.').removeClass('err').addClass('ok');
-                        $('#bgg-badge').text('No BGG forum link').removeClass('has-rulebook').addClass('no-rulebook');
-                        $('#game_select option[value="' + selectedGame + '"]').attr('data-has-bgg', 'false');
                     } else {
                         $('#bgg-link-status').text(data.message).addClass('err');
                     }
