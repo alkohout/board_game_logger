@@ -1690,7 +1690,7 @@ def ask_rules():
         sources_used = 'rulebook' + (' + pasted BGG content' if bgg_section else ' + training knowledge')
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model='claude-opus-4-8',
+            model='claude-haiku-4-5-20251001',
             max_tokens=1024,
             system=(
                 f'You are a board game rules expert for "{game_title}". '
