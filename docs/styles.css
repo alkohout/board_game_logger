@@ -18,7 +18,7 @@ h1, h2, h3, label {
     background: rgba(0,0,0,0.7);
     padding: 20px;
     border-radius: 8px;
-    max-width: 600px;
+    max-width: 400px;
     margin: 20px auto;
     position: relative;
 }
@@ -73,7 +73,7 @@ button:disabled { background-color: #888; cursor: default; }
 }
 .autocomplete-suggestion:hover { background: rgba(255,255,255,0.2); }
 
-table { border-collapse: separate; border-spacing: 16px 0; width: 100%; }
+table { border-collapse: separate; border-spacing: 20px 0; width: 100%; }
 th { text-align: left; padding: 6px; }
 td { padding: 6px; }
 
