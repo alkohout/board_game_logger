@@ -1822,9 +1822,7 @@ def api_dashboard():
     else:
         yearly_avg = 0
 
-    cur.close()
-    conn.close()
-    return jsonify({
+    result = {
         'game_titles': game_titles,
         'top_games': top_games,
         'today': today.isoformat(),
@@ -1841,7 +1839,10 @@ def api_dashboard():
             'this_year': most_played(start_of_year),
             'last_year': most_played(start_of_last_year, last_day_of_last_year),
         },
-    })
+    }
+    cur.close()
+    conn.close()
+    return jsonify(result)
 
 
 @app.route('/api/add_game', methods=['POST'])
