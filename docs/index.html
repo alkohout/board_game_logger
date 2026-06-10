@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Board Game Logger — Login</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <div class="form-container" style="max-width:360px; margin-top:80px;">
+        <h1>Board Game Logger</h1>
+        <label for="password">Password:</label>
+        <input type="password" id="password" placeholder="Enter password" autocomplete="current-password">
+        <button id="login-btn">Login</button>
+        <p id="error-msg" class="status-err" style="display:none;"></p>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script>
+        // If already logged in, skip login
+        if (localStorage.getItem('bg_token')) {
+            window.location.href = './dashboard.html';
+        }
+
+        async function doLogin() {
+            const pw = document.getElementById('password').value;
+            const btn = document.getElementById('login-btn');
+            const err = document.getElementById('error-msg');
+            btn.disabled = true;
+            btn.textContent = 'Logging in...';
+            err.style.display = 'none';
+            try {
+                const resp = await fetch(API_BASE + '/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pw })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    localStorage.setItem('bg_token', data.token);
+                    window.location.href = './dashboard.html';
+                } else {
+                    err.textContent = data.message || 'Wrong password';
+                    err.style.display = '';
+                }
+            } catch (e) {
+                err.textContent = 'Cannot reach server — is it online?';
+                err.style.display = '';
+            }
+            btn.disabled = false;
+            btn.textContent = 'Login';
+        }
+
+        document.getElementById('login-btn').addEventListener('click', doLogin);
+        document.getElementById('password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    </script>
+</body>
+</html>

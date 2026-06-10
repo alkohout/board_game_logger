@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
+from flask_cors import CORS
 import psycopg2
 import os
 import random
@@ -13,12 +14,34 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB upload limit
 app.secret_key = os.getenv('SECRET_KEY')
 
+CORS(app,
+     origins=["https://alkohout.github.io", "http://localhost:5500", "http://127.0.0.1:5500", "http://localhost:3000"],
+     allow_headers=["Authorization", "Content-Type"],
+     methods=["GET", "POST", "OPTIONS"])
+
+
+def api_auth_ok():
+    auth = request.headers.get('Authorization', '')
+    return auth.startswith('Bearer ') and auth[7:] == os.getenv('APP_PASSWORD', '')
+
+
 @app.before_request
 def require_login():
-    if request.endpoint in ('login', 'logout', 'static'):
+    if request.method == 'OPTIONS':
         return
-    if not session.get('logged_in'):
-        return redirect(url_for('login'))
+    if request.endpoint == 'static':
+        return
+    if request.path.startswith('/api/'):
+        if request.path == '/api/login':
+            return
+        if not api_auth_ok():
+            return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+        return
+    if request.endpoint in ('login', 'logout'):
+        return
+    if session.get('logged_in') or api_auth_ok():
+        return
+    return redirect(url_for('login'))
 
 selector_pool = []
 selector_choices = []
@@ -1720,6 +1743,248 @@ def ask_rules():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ── Static-frontend JSON API ──────────────────────────────────────────────────
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    data = request.get_json() or {}
+    if data.get('password') == os.getenv('APP_PASSWORD'):
+        return jsonify({'success': True, 'token': os.getenv('APP_PASSWORD')})
+    return jsonify({'success': False, 'message': 'Wrong password'}), 401
+
+
+@app.route('/api/dashboard')
+def api_dashboard():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
+    game_titles = [row[0] for row in cur.fetchall()]
+
+    cur.execute("""
+        SELECT game_title, COUNT(*) FROM games
+        GROUP BY game_title ORDER BY COUNT(*) DESC LIMIT 5
+    """)
+    top_games = [{'game': r[0], 'count': r[1]} for r in cur.fetchall()]
+
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
+    start_of_month = today.replace(day=1)
+    start_of_year = today.replace(month=1, day=1)
+    end_of_last_week = start_of_week - timedelta(days=1)
+    start_of_last_week = end_of_last_week - timedelta(days=6)
+    last_day_of_last_month = start_of_month - timedelta(days=1)
+    start_of_last_month = last_day_of_last_month.replace(day=1)
+    last_day_of_last_year = start_of_year - timedelta(days=1)
+    start_of_last_year = last_day_of_last_year.replace(month=1, day=1)
+
+    def count(q, *args): cur.execute(q, args); return cur.fetchone()[0]
+    def most_played(start, end=None):
+        if end:
+            cur.execute("""SELECT game_title, COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s
+                GROUP BY game_title ORDER BY COUNT(*) DESC LIMIT 1""", (start, end))
+        else:
+            cur.execute("""SELECT game_title, COUNT(*) FROM games WHERE date_played >= %s
+                GROUP BY game_title ORDER BY COUNT(*) DESC LIMIT 1""", (start,))
+        row = cur.fetchone()
+        return {'game': row[0], 'count': row[1]} if row else {'game': None, 'count': 0}
+
+    # Period counts
+    tw = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_week)
+    tm = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_month)
+    ty = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_year)
+    lw = count("SELECT COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s", start_of_last_week, end_of_last_week)
+    lm = count("SELECT COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s", start_of_last_month, last_day_of_last_month)
+    ly = count("SELECT COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s", start_of_last_year, last_day_of_last_year)
+
+    # Averages
+    ref = date(2024, 1, 1)
+    total_days = (start_of_week - ref).days
+    num_weeks = total_days // 7 if total_days >= 7 else 0
+    if num_weeks:
+        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref, start_of_week))
+        weekly_avg = round(cur.fetchone()[0] / num_weeks)
+    else:
+        weekly_avg = 0
+    num_months = (start_of_month.year - ref.year) * 12 + (start_of_month.month - ref.month)
+    if num_months:
+        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref, start_of_month))
+        monthly_avg = round(cur.fetchone()[0] / num_months)
+    else:
+        monthly_avg = 0
+    ref_y = date(2023, 1, 1)
+    num_years = start_of_year.year - ref_y.year
+    if num_years:
+        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref_y, start_of_year))
+        yearly_avg = round(cur.fetchone()[0] / num_years)
+    else:
+        yearly_avg = 0
+
+    cur.close()
+    conn.close()
+    return jsonify({
+        'game_titles': game_titles,
+        'top_games': top_games,
+        'today': today.isoformat(),
+        'games_played': {
+            'this_week': tw, 'this_month': tm, 'this_year': ty,
+            'last_week': lw, 'last_month': lm, 'last_year': ly,
+            'weekly_avg': weekly_avg, 'monthly_avg': monthly_avg, 'yearly_avg': yearly_avg,
+        },
+        'most_played': {
+            'this_week': most_played(start_of_week),
+            'last_week': most_played(start_of_last_week, end_of_last_week),
+            'this_month': most_played(start_of_month),
+            'last_month': most_played(start_of_last_month, last_day_of_last_month),
+            'this_year': most_played(start_of_year),
+            'last_year': most_played(start_of_last_year, last_day_of_last_year),
+        },
+    })
+
+
+@app.route('/api/add_game', methods=['POST'])
+def api_add_game():
+    data = request.get_json() or {}
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
+             data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/games_overview')
+def api_games_overview():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
+    start_of_month = today.replace(day=1)
+    start_of_year = today.replace(month=1, day=1)
+    end_of_last_week = start_of_week - timedelta(days=1)
+    start_of_last_week = end_of_last_week - timedelta(days=6)
+    end_of_last_month = start_of_month - timedelta(days=1)
+    start_of_last_month = end_of_last_month.replace(day=1)
+    end_of_last_year = start_of_year - timedelta(days=1)
+    start_of_last_year = end_of_last_year.replace(month=1, day=1)
+
+    def fetch(start, end):
+        cur.execute("""SELECT game_title, COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s
+            GROUP BY game_title ORDER BY COUNT(*) DESC""", (start, end))
+        return [{'game': r[0], 'count': r[1]} for r in cur.fetchall()]
+
+    result = {
+        'this_week': fetch(start_of_week, today),
+        'this_month': fetch(start_of_month, today),
+        'this_year': fetch(start_of_year, today),
+        'last_week': fetch(start_of_last_week, end_of_last_week),
+        'last_month': fetch(start_of_last_month, end_of_last_month),
+        'last_year': fetch(start_of_last_year, end_of_last_year),
+    }
+    cur.close()
+    conn.close()
+    return jsonify(result)
+
+
+@app.route('/api/all_games')
+def api_all_games():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT game_title, RANK() OVER (ORDER BY COUNT(*) DESC), COUNT(*),
+            COALESCE((SELECT notes FROM games g2 WHERE g2.game_title = g.game_title
+                AND g2.notes IS NOT NULL ORDER BY g2.date_played DESC LIMIT 1), '')
+        FROM games g GROUP BY game_title ORDER BY game_title
+    """)
+    rows = [{'game': r[0], 'rank': r[1], 'play_count': r[2], 'latest_note': r[3]} for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return jsonify(rows)
+
+
+@app.route('/api/imperium_stats')
+def api_imperium_stats():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT level,
+            COUNT(CASE WHEN result ILIKE '%won%' THEN 1 END) AS won,
+            COUNT(CASE WHEN result ILIKE '%lost%' THEN 1 END) AS lost
+        FROM imperium GROUP BY level ORDER BY level
+    """)
+    rows = [{'level': r[0], 'won': r[1], 'lost': r[2]} for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return jsonify(rows)
+
+
+@app.route('/api/sleeping_gods_totems_data')
+def api_sleeping_gods_totems_data():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, totem, found FROM sleeping_gods_totems ORDER BY id")
+    rows = [{'id': r[0], 'totem': r[1], 'found': r[2]} for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return jsonify({'totems': rows})
+
+
+@app.route('/api/add_sleeping_gods', methods=['POST'])
+def api_add_sleeping_gods():
+    try:
+        d = request.get_json() or {}
+        def i(k): return int(d.get(k) or 0)
+        def s(k): return str(d.get(k) or '')
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO sleeping_gods (location, part, required_keyword, gained_keyword, visited, notes, combat, combat_level, gained, req_coins, req_meat, req_veg, req_grain, req_wood, req_artifacts, gain_coins, gain_meat, gain_veg, gain_grain, gain_wood, gain_artifacts, gain_xp, gain_ship_damage, gain_ship_repair, gain_crew_damage, gain_crew_health, gain_low_morale, gain_fright, gain_venom, gain_weakness, gain_madness, remove_low_morale, remove_fright, remove_venom, remove_weakness, remove_madness, gain_totem, challenge, challenge_level, gain_adventure) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (i('location'), s('part'), s('required_keyword'), s('gained_keyword'),
+             '1' if d.get('visited') else '0', s('notes'),
+             '1' if d.get('combat') else '0', i('combat_level'), s('gained'),
+             i('req_coins'), i('req_meat'), i('req_veg'), i('req_grain'), i('req_wood'), i('req_artifacts'),
+             i('gain_coins'), i('gain_meat'), i('gain_veg'), i('gain_grain'), i('gain_wood'), i('gain_artifacts'),
+             i('gain_xp'), i('gain_ship_damage'), i('gain_ship_repair'), i('gain_crew_damage'), i('gain_crew_health'),
+             i('gain_low_morale'), i('gain_fright'), i('gain_venom'), i('gain_weakness'), i('gain_madness'),
+             i('remove_low_morale'), i('remove_fright'), i('remove_venom'), i('remove_weakness'), i('remove_madness'),
+             s('gain_totem'), s('challenge'), i('challenge_level'), i('gain_adventure'))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/rules_assistant_data')
+def api_rules_assistant_data():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
+    game_titles = [row[0] for row in cur.fetchall()]
+    try:
+        cur.execute("SELECT game_title, bgg_forum_cache FROM rulebooks WHERE pdf_data IS NOT NULL")
+        rulebook_rows = cur.fetchall()
+    except Exception:
+        conn.rollback()
+        cur.execute("SELECT game_title FROM rulebooks WHERE pdf_data IS NOT NULL")
+        rulebook_rows = [(r[0], None) for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    has_rulebook = {g: any(r[0] == g for r in rulebook_rows) for g in game_titles}
+    has_bgg = {g: any(r[0] == g and r[1] for r in rulebook_rows) for g in game_titles}
+    return jsonify({'game_titles': game_titles, 'has_rulebook': has_rulebook, 'has_bgg': has_bgg})
 
 
 if __name__ == '__main__':

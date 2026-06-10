@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Games Overview</title>
+    <link rel="stylesheet" href="./styles.css">
+    <style>
+        .period-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .period-block h3 { margin: 0 0 8px; }
+        .period-block ul { margin: 0; padding-left: 20px; color: #ddd; }
+        @media (max-width: 480px) { .period-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="form-container" style="max-width:700px;">
+        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+        <h1>Games Overview</h1>
+        <div class="period-grid" id="grid">
+            <p style="color:#aaa;">Loading...</p>
+        </div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+        const labels = {
+            this_week: 'This Week', this_month: 'This Month', this_year: 'This Year',
+            last_week: 'Last Week', last_month: 'Last Month', last_year: 'Last Year'
+        };
+        const order = ['this_week','last_week','this_month','last_month','this_year','last_year'];
+        async function load() {
+            const data = await apiGet('/api/games_overview');
+            if (!data) return;
+            const grid = document.getElementById('grid');
+            grid.innerHTML = order.map(key => {
+                const games = data[key] || [];
+                const items = games.length
+                    ? games.map(g => `<li>${g.game} — ${g.count}</li>`).join('')
+                    : '<li style="color:#888;">None</li>';
+                return `<div class="period-block"><h3>${labels[key]}</h3><ul>${items}</ul></div>`;
+            }).join('');
+        }
+        load();
+    </script>
+</body>
+</html>

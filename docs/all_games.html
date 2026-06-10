@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>All Games Ranked</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <div class="form-container" style="max-width:700px;">
+        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+        <h1>All Games Ranked</h1>
+        <table id="games-table">
+            <thead>
+                <tr><th>Rank</th><th>Game</th><th>Plays</th><th>Latest Note</th></tr>
+            </thead>
+            <tbody id="games-body">
+                <tr><td colspan="4" style="color:#aaa;">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+        async function load() {
+            const data = await apiGet('/api/all_games');
+            if (!data) return;
+            const tbody = document.getElementById('games-body');
+            if (!data.length) { tbody.innerHTML = '<tr><td colspan="4">No games found.</td></tr>'; return; }
+            tbody.innerHTML = data.map(g => `
+                <tr>
+                    <td>${g.rank}</td>
+                    <td>${g.game}</td>
+                    <td>${g.play_count}</td>
+                    <td style="font-size:0.85em; color:#ccc;">${g.latest_note || ''}</td>
+                </tr>`).join('');
+        }
+        load();
+    </script>
+</body>
+</html>

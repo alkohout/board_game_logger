@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sleeping Gods Log</title>
+    <link rel="stylesheet" href="./styles.css">
+    <style>
+        .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+        .grid2 label, .grid3 label { font-size: 0.85em; margin-bottom: 2px; display: block; }
+        .grid2 input, .grid3 input { margin-bottom: 0; }
+        .result-card {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .result-card h4 { margin: 0 0 8px; color: #90EE90; }
+    </style>
+</head>
+<body>
+
+<!-- Add Location -->
+<div class="form-container" style="max-width:700px;">
+    <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+    <h1>Sleeping Gods Log</h1>
+    <p style="color:#aaa; font-size:0.9em;">Add a new location entry.</p>
+
+    <div class="grid2">
+        <div><label>Location #</label><input type="number" id="location" placeholder="e.g. 42"></div>
+        <div><label>Part</label><input type="text" id="part" placeholder="Part A/B/C…"></div>
+    </div>
+    <div class="grid2">
+        <div><label>Required Keyword</label><input type="text" id="required_keyword"></div>
+        <div><label>Gained Keyword</label><input type="text" id="gained_keyword"></div>
+    </div>
+    <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+        <input type="checkbox" id="visited" style="width:auto; margin:0;"> Visited
+    </label>
+    <label>Notes</label>
+    <textarea id="notes" rows="3"></textarea>
+    <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+        <input type="checkbox" id="combat" style="width:auto; margin:0;"> Combat
+    </label>
+    <div class="grid2">
+        <div><label>Combat Level</label><input type="number" id="combat_level"></div>
+        <div><label>Gained</label><input type="text" id="gained"></div>
+    </div>
+
+    <h3 style="margin-top:16px;">Required Resources</h3>
+    <div class="grid3">
+        <div><label>Coins</label><input type="number" id="req_coins" value="0"></div>
+        <div><label>Meat</label><input type="number" id="req_meat" value="0"></div>
+        <div><label>Veg</label><input type="number" id="req_veg" value="0"></div>
+        <div><label>Grain</label><input type="number" id="req_grain" value="0"></div>
+        <div><label>Wood</label><input type="number" id="req_wood" value="0"></div>
+        <div><label>Artifacts</label><input type="number" id="req_artifacts" value="0"></div>
+    </div>
+
+    <h3>Gained Resources</h3>
+    <div class="grid3">
+        <div><label>Coins</label><input type="number" id="gain_coins" value="0"></div>
+        <div><label>Meat</label><input type="number" id="gain_meat" value="0"></div>
+        <div><label>Veg</label><input type="number" id="gain_veg" value="0"></div>
+        <div><label>Grain</label><input type="number" id="gain_grain" value="0"></div>
+        <div><label>Wood</label><input type="number" id="gain_wood" value="0"></div>
+        <div><label>Artifacts</label><input type="number" id="gain_artifacts" value="0"></div>
+        <div><label>XP</label><input type="number" id="gain_xp" value="0"></div>
+        <div><label>Adventure</label><input type="number" id="gain_adventure" value="0"></div>
+        <div><label>Totem</label><input type="text" id="gain_totem"></div>
+    </div>
+
+    <h3>Ship &amp; Crew</h3>
+    <div class="grid3">
+        <div><label>Ship Damage</label><input type="number" id="gain_ship_damage" value="0"></div>
+        <div><label>Ship Repair</label><input type="number" id="gain_ship_repair" value="0"></div>
+        <div><label>Crew Damage</label><input type="number" id="gain_crew_damage" value="0"></div>
+        <div><label>Crew Health</label><input type="number" id="gain_crew_health" value="0"></div>
+    </div>
+
+    <h3>Conditions</h3>
+    <div class="grid3">
+        <div><label>+ Low Morale</label><input type="number" id="gain_low_morale" value="0"></div>
+        <div><label>+ Fright</label><input type="number" id="gain_fright" value="0"></div>
+        <div><label>+ Venom</label><input type="number" id="gain_venom" value="0"></div>
+        <div><label>+ Weakness</label><input type="number" id="gain_weakness" value="0"></div>
+        <div><label>+ Madness</label><input type="number" id="gain_madness" value="0"></div>
+    </div>
+    <div class="grid3">
+        <div><label>- Low Morale</label><input type="number" id="remove_low_morale" value="0"></div>
+        <div><label>- Fright</label><input type="number" id="remove_fright" value="0"></div>
+        <div><label>- Venom</label><input type="number" id="remove_venom" value="0"></div>
+        <div><label>- Weakness</label><input type="number" id="remove_weakness" value="0"></div>
+        <div><label>- Madness</label><input type="number" id="remove_madness" value="0"></div>
+    </div>
+
+    <h3>Challenge</h3>
+    <div class="grid2">
+        <div><label>Challenge</label><input type="text" id="challenge"></div>
+        <div><label>Challenge Level</label><input type="number" id="challenge_level" value="0"></div>
+    </div>
+
+    <br>
+    <button id="add-btn">Add Location</button>
+    <button id="reset-visited-btn" class="btn-red" style="float:right;">Reset All Visited</button>
+    <p id="add-status" class="status-ok" style="display:none; clear:both;"></p>
+</div>
+
+<!-- Search -->
+<div class="form-container" style="max-width:700px;">
+    <h2>Search Locations</h2>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start;">
+        <div style="flex:1; min-width:120px;">
+            <label>By Location #</label>
+            <input type="number" id="search-loc" placeholder="e.g. 42">
+            <button id="search-loc-btn">Search</button>
+        </div>
+        <div style="flex:2; min-width:160px;">
+            <label>By Notes / Keyword</label>
+            <input type="text" id="search-notes">
+            <button id="search-notes-btn">Search</button>
+        </div>
+    </div>
+    <div id="search-results" style="margin-top:16px;"></div>
+</div>
+
+<!-- Totems link -->
+<div class="form-container" style="max-width:700px; text-align:center;">
+    <button onclick="window.location.href='./sleeping_gods_totems.html'">View Totems &amp; Endings →</button>
+</div>
+
+<footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+<script src="./config.js"></script>
+<script src="./api.js"></script>
+<script>
+    requireAuth();
+
+    function fieldVal(id) { return document.getElementById(id).value; }
+    function intVal(id) { return parseInt(fieldVal(id)) || 0; }
+    function boolVal(id) { return document.getElementById(id).checked; }
+
+    document.getElementById('add-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('add-btn');
+        const status = document.getElementById('add-status');
+        btn.disabled = true;
+        const data = await apiPost('/api/add_sleeping_gods', {
+            location: intVal('location'), part: fieldVal('part'),
+            required_keyword: fieldVal('required_keyword'), gained_keyword: fieldVal('gained_keyword'),
+            visited: boolVal('visited'), notes: fieldVal('notes'),
+            combat: boolVal('combat'), combat_level: intVal('combat_level'),
+            gained: fieldVal('gained'),
+            req_coins: intVal('req_coins'), req_meat: intVal('req_meat'), req_veg: intVal('req_veg'),
+            req_grain: intVal('req_grain'), req_wood: intVal('req_wood'), req_artifacts: intVal('req_artifacts'),
+            gain_coins: intVal('gain_coins'), gain_meat: intVal('gain_meat'), gain_veg: intVal('gain_veg'),
+            gain_grain: intVal('gain_grain'), gain_wood: intVal('gain_wood'), gain_artifacts: intVal('gain_artifacts'),
+            gain_xp: intVal('gain_xp'), gain_adventure: intVal('gain_adventure'), gain_totem: fieldVal('gain_totem'),
+            gain_ship_damage: intVal('gain_ship_damage'), gain_ship_repair: intVal('gain_ship_repair'),
+            gain_crew_damage: intVal('gain_crew_damage'), gain_crew_health: intVal('gain_crew_health'),
+            gain_low_morale: intVal('gain_low_morale'), gain_fright: intVal('gain_fright'),
+            gain_venom: intVal('gain_venom'), gain_weakness: intVal('gain_weakness'), gain_madness: intVal('gain_madness'),
+            remove_low_morale: intVal('remove_low_morale'), remove_fright: intVal('remove_fright'),
+            remove_venom: intVal('remove_venom'), remove_weakness: intVal('remove_weakness'), remove_madness: intVal('remove_madness'),
+            challenge: fieldVal('challenge'), challenge_level: intVal('challenge_level'),
+        });
+        btn.disabled = false;
+        if (data?.success) {
+            status.textContent = 'Location added!';
+            status.className = 'status-ok';
+            status.style.display = '';
+            setTimeout(() => status.style.display = 'none', 3000);
+        } else {
+            status.textContent = 'Error: ' + (data?.message || 'unknown');
+            status.className = 'status-err';
+            status.style.display = '';
+        }
+    });
+
+    document.getElementById('reset-visited-btn').addEventListener('click', async () => {
+        if (!confirm('Reset all visited flags?')) return;
+        await apiPost('/reset_visited_sleeping_gods', {});
+    });
+
+    function renderResults(rows) {
+        if (!rows.length) return '<p style="color:#aaa;">No results.</p>';
+        return rows.map(r => `
+            <div class="result-card">
+                <h4>Location ${r.location} — Part ${r.part || '—'}</h4>
+                <p style="margin:0 0 4px;">${r.notes || ''}</p>
+                <small style="color:#aaa;">
+                    Required: ${r.required_keyword || '—'} | Gained: ${r.gained_keyword || '—'} |
+                    Visited: ${r.visited ? 'Yes' : 'No'} |
+                    Combat: ${r.combat ? 'Yes (lvl ' + r.combat_level + ')' : 'No'}
+                </small>
+                <div style="margin-top:6px; font-size:0.8em; color:#ccc;">
+                    Req: Coins ${r.req_coins} Meat ${r.req_meat} Veg ${r.req_veg} Grain ${r.req_grain} Wood ${r.req_wood} Artifacts ${r.req_artifacts}<br>
+                    Gain: Coins ${r.gain_coins} Meat ${r.gain_meat} XP ${r.gain_xp} Totem ${r.gain_totem || '—'}
+                </div>
+                <button class="btn-red" style="font-size:0.8em; padding:4px 10px; margin-top:8px;"
+                    onclick="deleteRow(${r.id})">Delete</button>
+            </div>`).join('');
+    }
+
+    async function deleteRow(id) {
+        if (!confirm('Delete this entry?')) return;
+        const data = await apiPost('/delete_sleeping_gods_row', { id });
+        if (data?.success) document.getElementById(`row-${id}`)?.remove();
+    }
+
+    document.getElementById('search-loc-btn').addEventListener('click', async () => {
+        const term = document.getElementById('search-loc').value;
+        const data = await apiGet('/search_sleeping_gods_location?term=' + encodeURIComponent(term));
+        document.getElementById('search-results').innerHTML = renderResults(data || []);
+    });
+
+    document.getElementById('search-notes-btn').addEventListener('click', async () => {
+        const term = document.getElementById('search-notes').value.trim();
+        if (!term) return;
+        const data = await apiGet('/search_sleeping_gods_notes?term=' + encodeURIComponent(term));
+        document.getElementById('search-results').innerHTML = renderResults(data || []);
+    });
+</script>
+</body>
+</html>

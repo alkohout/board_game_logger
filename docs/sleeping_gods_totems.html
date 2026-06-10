@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sleeping Gods — Totems</title>
+    <link rel="stylesheet" href="./styles.css">
+    <style>
+        table { border-collapse: collapse; width: 100%; }
+        td { padding: 6px; vertical-align: middle; }
+        td input[type="checkbox"] { margin-right: 6px; }
+    </style>
+</head>
+<body>
+    <button class="btn-back" style="margin:20px 0 0 20px;" onclick="window.location.href='./sleeping_gods.html'">← Back to Sleeping Gods</button>
+
+    <div class="form-container" style="max-width:750px;">
+        <h2>Totems</h2>
+        <table><tbody id="totems-body"></tbody></table>
+    </div>
+
+    <div class="form-container" style="max-width:750px;">
+        <h2>Endings</h2>
+        <table><tbody id="endings-body"></tbody></table>
+    </div>
+
+    <div class="form-container" style="max-width:750px;">
+        <h2>Unlocked Cards</h2>
+        <p>You've uncovered <strong id="totem-count">0</strong> totems and endings. Include ticked Quests below in all future campaigns.</p>
+        <table><tbody id="unlocked-body"></tbody></table>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+
+        let allTotems = [];
+
+        function countChecked() {
+            return allTotems
+                .filter(t => t.found && !t.totem.includes('Quest'))
+                .length;
+        }
+
+        function refreshCount() {
+            document.getElementById('totem-count').textContent = countChecked();
+        }
+
+        async function toggleTotem(id, isFound) {
+            allTotems.find(t => t.id === id).found = isFound;
+            refreshCount();
+            checkUnlocks();
+            await apiPost('/sleeping_gods_totems_update', { totemId: id, isFound });
+        }
+
+        function renderGrid(bodyId, items) {
+            const tbody = document.getElementById(bodyId);
+            const rows = [];
+            for (let i = 0; i < items.length; i += 3) {
+                const cells = items.slice(i, i + 3).map(t => {
+                    if (!t) return '<td></td>';
+                    return `<td>
+                        <input type="checkbox" id="t-${t.id}" data-id="${t.id}" ${t.found ? 'checked' : ''}>
+                        <label for="t-${t.id}">${t.totem}</label>
+                    </td>`;
+                });
+                while (cells.length < 3) cells.push('<td></td>');
+                rows.push('<tr>' + cells.join('') + '</tr>');
+            }
+            tbody.innerHTML = rows.join('');
+            tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.addEventListener('change', () => toggleTotem(parseInt(cb.dataset.id), cb.checked));
+            });
+        }
+
+        function checkUnlocks() {
+            const c = countChecked();
+            const unlocks = [
+                [4,  79, 'Congratulations! You have ' + c + ' totems/endings — Quests 171-172 unlocked!'],
+                [7,  82, 'Congratulations! You have ' + c + ' totems/endings — Quests 169-170 unlocked!'],
+                [9,  85, 'Congratulations! You have ' + c + ' totems/endings — Quest 168 unlocked!'],
+                [11, 80, 'Congratulations! You have ' + c + ' totems/endings — Quest 174 unlocked!'],
+                [13, 83, 'Congratulations! You have ' + c + ' totems/endings — Quest 175 unlocked!'],
+                [15, 86, 'Congratulations! You have ' + c + ' totems/endings — Quests 176-177 unlocked!'],
+                [18, 81, 'Congratulations! You have ' + c + ' totems/endings — Quests 178-180 unlocked!'],
+                [22, 84, 'Congratulations! You have ' + c + ' totems/endings — Quest 173 unlocked!'],
+            ];
+            unlocks.forEach(([target, questId, msg]) => {
+                if (c === target) {
+                    const totem = allTotems.find(t => t.id === questId);
+                    const cb = document.getElementById('t-' + questId);
+                    if (totem && !totem.found && cb) {
+                        cb.checked = true;
+                        toggleTotem(questId, true);
+                        alert(msg);
+                    }
+                }
+            });
+        }
+
+        async function load() {
+            const data = await apiGet('/api/sleeping_gods_totems_data');
+            if (!data) return;
+            allTotems = data.totems;
+            renderGrid('totems-body',   allTotems.slice(0, 75));
+            renderGrid('unlocked-body', allTotems.slice(75, 83));
+            renderGrid('endings-body',  allTotems.slice(83));
+            refreshCount();
+        }
+        load();
+    </script>
+</body>
+</html>

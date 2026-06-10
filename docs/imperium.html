@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Imperium Stats</title>
+    <link rel="stylesheet" href="./styles.css">
+    <style>
+        td.won  { color: #90EE90; }
+        td.lost { color: #FF6B6B; }
+    </style>
+</head>
+<body>
+    <div class="form-container" style="max-width:500px;">
+        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+        <h1>Imperium — Won / Lost</h1>
+        <table>
+            <thead><tr><th>Civilization</th><th>Won</th><th>Lost</th></tr></thead>
+            <tbody id="imp-body">
+                <tr><td colspan="3" style="color:#aaa;">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+        async function load() {
+            const data = await apiGet('/api/imperium_stats');
+            if (!data) return;
+            const tbody = document.getElementById('imp-body');
+            if (!data.length) { tbody.innerHTML = '<tr><td colspan="3">No data yet.</td></tr>'; return; }
+            tbody.innerHTML = data.map(r => `
+                <tr>
+                    <td>${r.level}</td>
+                    <td class="won">${r.won}</td>
+                    <td class="lost">${r.lost}</td>
+                </tr>`).join('');
+        }
+        load();
+    </script>
+</body>
+</html>

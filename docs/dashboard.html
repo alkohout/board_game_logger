@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Board Game Logger</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<!-- Log a Game -->
+<div class="form-container">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h1 style="margin:0;">Log a Game</h1>
+        <button class="btn-back" onclick="logout()" style="font-size:0.8em; padding:6px 12px;">Logout</button>
+    </div>
+    <br>
+    <label>Date Played:</label>
+    <input type="date" id="date_played">
+    <label>Game Title:</label>
+    <div style="position:relative;">
+        <input type="text" id="game_title" autocomplete="off">
+        <div id="add_suggestions" class="autocomplete-suggestions"></div>
+    </div>
+    <label>Result:</label>
+    <textarea id="result" rows="1" placeholder="Add result here..."></textarea>
+    <label>Level:</label>
+    <textarea id="level" rows="1" placeholder="Add level here..."></textarea>
+    <label>My Score:</label>
+    <textarea id="my_score" rows="1" placeholder="Add my score here..."></textarea>
+    <label>Bot Score:</label>
+    <textarea id="bot_score" rows="1" placeholder="Add bot score here..."></textarea>
+    <label>Notes:</label>
+    <textarea id="notes" rows="4" placeholder="Add any notes here..."></textarea>
+    <button id="log-btn">Log Game</button>
+    <p id="log-status" class="status-ok" style="display:none;"></p>
+</div>
+
+<!-- Stats -->
+<div class="form-container" id="stats-container">
+    <h2>Games played</h2>
+    <table>
+        <tr><th></th><th>Week</th><th>Month</th><th>Year</th></tr>
+        <tr><td>Current</td><td id="s-tw">—</td><td id="s-tm">—</td><td id="s-ty">—</td></tr>
+        <tr><td>Previous</td><td id="s-lw">—</td><td id="s-lm">—</td><td id="s-ly">—</td></tr>
+        <tr><td>Average</td><td id="s-aw">—</td><td id="s-am">—</td><td id="s-ay">—</td></tr>
+    </table>
+
+    <h2>Most Played</h2>
+    <table>
+        <tr><th></th><th>Game</th><th>Plays</th></tr>
+        <tr><td>This Week</td><td id="mp-tw-g">—</td><td id="mp-tw-c">—</td></tr>
+        <tr><td>Last Week</td><td id="mp-lw-g">—</td><td id="mp-lw-c">—</td></tr>
+        <tr><td>This Month</td><td id="mp-tm-g">—</td><td id="mp-tm-c">—</td></tr>
+        <tr><td>Last Month</td><td id="mp-lm-g">—</td><td id="mp-lm-c">—</td></tr>
+        <tr><td>This Year</td><td id="mp-ty-g">—</td><td id="mp-ty-c">—</td></tr>
+        <tr><td>Last Year</td><td id="mp-ly-g">—</td><td id="mp-ly-c">—</td></tr>
+    </table>
+
+    <h3>Top 5 All Time</h3>
+    <ul id="top-games"></ul>
+</div>
+
+<!-- Search -->
+<div class="form-container">
+    <h2>Extra Game Info</h2>
+    <label>Game Title:</label>
+    <div style="position:relative;">
+        <input type="text" id="search_title" autocomplete="off">
+        <div id="search_suggestions" class="autocomplete-suggestions"></div>
+    </div>
+    <button id="search-btn">Search Last Played</button>
+    <button id="search-nonempty-btn">Latest Non-empty Entry</button>
+    <div id="search-result" style="margin-top:10px;"></div>
+    <div id="search-nonempty-result" style="margin-top:10px;"></div>
+
+    <br>
+    <label>Edit Most Recent Note:</label>
+    <div style="position:relative;">
+        <input type="text" id="edit_note_search" autocomplete="off">
+        <div id="edit_suggestions" class="autocomplete-suggestions"></div>
+    </div>
+    <button id="edit-fetch-btn">Load Note</button>
+    <div id="edit-note-area" style="display:none; margin-top:10px;">
+        <textarea id="edit-note-input" rows="4"></textarea>
+        <button id="save-note-btn">Save Note</button>
+        <p id="save-status" class="status-ok" style="display:none;"></p>
+    </div>
+
+    <br>
+    <nav>
+        <button onclick="window.location.href='./games_overview.html'">Games Overview</button>
+        <button onclick="window.location.href='./all_games.html'">All Games Ranked</button>
+        <button onclick="window.location.href='./imperium.html'">Imperium Stats</button>
+        <button onclick="window.location.href='./sleeping_gods.html'">Sleeping Gods Log</button>
+        <button onclick="window.location.href='./rules_assistant.html'">Rules Assistant (AI)</button>
+    </nav>
+</div>
+
+<!-- Selector -->
+<div class="form-container">
+    <h2>Boardgame Selector</h2>
+    <label>Player:</label>
+    <input type="number" id="selector_player" min="1" value="1" style="max-width:80px;">
+    <label>Game Title:</label>
+    <div style="position:relative;">
+        <input type="text" id="selector_game_title" autocomplete="off">
+        <div id="selector_suggestions" class="autocomplete-suggestions"></div>
+    </div>
+    <label>Choice:</label>
+    <select id="choice_type">
+        <option value="first">First Choice</option>
+        <option value="second">Second Choice</option>
+        <option value="third">Third Choice</option>
+    </select>
+    <br>
+    <button id="add-choice-btn">Add Choice</button>
+    <button id="pick-btn">Pick Random Game</button>
+    <button class="btn-red" id="clear-choices-btn">Clear Choices</button>
+    <p id="selector-msg"></p>
+    <p id="selector-pick" style="font-weight:bold;"></p>
+    <h3>Current Choices</h3>
+    <ul id="selector-pool"></ul>
+</div>
+
+<footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+<script src="./config.js"></script>
+<script src="./api.js"></script>
+<script>
+requireAuth();
+
+// Set today's date
+document.getElementById('date_played').value = new Date().toISOString().split('T')[0];
+
+// Load dashboard stats
+async function loadStats() {
+    const d = await apiGet('/api/dashboard');
+    if (!d) return;
+    const gp = d.games_played;
+    const mp = d.most_played;
+    document.getElementById('s-tw').textContent = gp.this_week;
+    document.getElementById('s-tm').textContent = gp.this_month;
+    document.getElementById('s-ty').textContent = gp.this_year;
+    document.getElementById('s-lw').textContent = gp.last_week;
+    document.getElementById('s-lm').textContent = gp.last_month;
+    document.getElementById('s-ly').textContent = gp.last_year;
+    document.getElementById('s-aw').textContent = gp.weekly_avg;
+    document.getElementById('s-am').textContent = gp.monthly_avg;
+    document.getElementById('s-ay').textContent = gp.yearly_avg;
+    const rows = [
+        ['tw', mp.this_week], ['lw', mp.last_week], ['tm', mp.this_month],
+        ['lm', mp.last_month], ['ty', mp.this_year], ['ly', mp.last_year]
+    ];
+    rows.forEach(([k, v]) => {
+        document.getElementById('mp-' + k + '-g').textContent = v.game || '—';
+        document.getElementById('mp-' + k + '-c').textContent = v.count || 0;
+    });
+    const ul = document.getElementById('top-games');
+    ul.innerHTML = d.top_games.map(g => `<li>${g.game} — ${g.count}</li>`).join('');
+}
+loadStats();
+
+// Autocompletes
+setupAutocomplete('game_title', 'add_suggestions');
+setupAutocomplete('search_title', 'search_suggestions');
+setupAutocomplete('edit_note_search', 'edit_suggestions');
+setupAutocomplete('selector_game_title', 'selector_suggestions');
+
+// Log game
+document.getElementById('log-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('log-btn');
+    const status = document.getElementById('log-status');
+    const title = document.getElementById('game_title').value.trim();
+    const dp = document.getElementById('date_played').value;
+    if (!title || !dp) { alert('Date and game title are required.'); return; }
+    btn.disabled = true;
+    const data = await apiPost('/api/add_game', {
+        date_played: dp, game_title: title,
+        result: document.getElementById('result').value,
+        level: document.getElementById('level').value,
+        my_score: document.getElementById('my_score').value,
+        bot_score: document.getElementById('bot_score').value,
+        notes: document.getElementById('notes').value
+    });
+    btn.disabled = false;
+    if (data?.success) {
+        status.textContent = 'Logged!';
+        status.className = 'status-ok';
+        status.style.display = '';
+        ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
+        loadStats();
+        setTimeout(() => status.style.display = 'none', 3000);
+    } else {
+        status.textContent = 'Error: ' + (data?.message || 'unknown');
+        status.className = 'status-err';
+        status.style.display = '';
+    }
+});
+
+// Search last played
+function renderGameRow(data, prefix) {
+    if (!data?.date_played) return '<p>No record found.</p>';
+    return `
+        <table><tr><th></th><th>Result</th><th>Level</th><th>My score</th><th>Bot score</th></tr>
+        <tr><td>${data.date_played}</td><td>${data[prefix+'result']||''}</td><td>${data[prefix+'level']||''}</td><td>${data[prefix+'my_score']||''}</td><td>${data[prefix+'bot_score']||''}</td></tr></table>
+        <br><table><tr><th></th><th>Total</th><th>This week</th><th>This month</th><th>This year</th></tr>
+        <tr><td>Played</td><td>${data.total_times_played}</td><td>${data.played_this_week}</td><td>${data.played_this_month}</td><td>${data.played_this_year}</td></tr></table>
+        <br>Notes: ${data[prefix+'notes']||''}<br>Ranking: ${data.ranking}`;
+}
+
+document.getElementById('search-btn').addEventListener('click', async () => {
+    const term = document.getElementById('search_title').value.trim();
+    if (!term) return;
+    const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
+    document.getElementById('search-result').innerHTML = renderGameRow(data, '');
+});
+
+document.getElementById('search-nonempty-btn').addEventListener('click', async () => {
+    const term = document.getElementById('search_title').value.trim();
+    if (!term) return;
+    const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
+    document.getElementById('search-nonempty-result').innerHTML = renderGameRow(data, 'nonempty_');
+});
+
+// Edit note
+document.getElementById('edit-fetch-btn').addEventListener('click', async () => {
+    const term = document.getElementById('edit_note_search').value.trim();
+    if (!term) return;
+    const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
+    if (data?.date_played) {
+        document.getElementById('edit-note-input').value = data.notes || '';
+        document.getElementById('edit-note-area').style.display = '';
+        document.getElementById('edit-note-area').dataset.gameTitle = term;
+    }
+});
+
+document.getElementById('save-note-btn').addEventListener('click', async () => {
+    const gameTitle = document.getElementById('edit-note-area').dataset.gameTitle;
+    const note = document.getElementById('edit-note-input').value;
+    const status = document.getElementById('save-status');
+    const data = await apiPost('/update_note', { game_title: gameTitle, note });
+    if (data?.success) {
+        status.textContent = 'Saved!'; status.className = 'status-ok'; status.style.display = '';
+        setTimeout(() => status.style.display = 'none', 3000);
+    } else {
+        status.textContent = 'Save failed'; status.className = 'status-err'; status.style.display = '';
+    }
+});
+
+// Selector
+async function loadSelectorPool() {
+    const data = await apiGet('/get_selector_pool');
+    const ul = document.getElementById('selector-pool');
+    if (!data?.pool?.length) { ul.innerHTML = '<li>No choices added yet.</li>'; return; }
+    const labels = { first: 'First', second: 'Second', third: 'Third' };
+    ul.innerHTML = data.pool.map(e => `<li>Player ${e.player} — ${labels[e.choice_type]} Choice: ${e.game_title}</li>`).join('');
+}
+loadSelectorPool();
+
+document.getElementById('add-choice-btn').addEventListener('click', async () => {
+    const title = document.getElementById('selector_game_title').value.trim();
+    const ct = document.getElementById('choice_type').value;
+    const player = document.getElementById('selector_player').value;
+    if (!title) { alert('Enter a game title.'); return; }
+    const token = getToken();
+    const resp = await fetch(API_BASE + '/add_selector_game', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': 'Bearer ' + token },
+        body: `game_title=${encodeURIComponent(title)}&choice_type=${ct}&player=${player}`
+    });
+    const data = await resp.json();
+    document.getElementById('selector-msg').textContent = data.message;
+    document.getElementById('selector_game_title').value = '';
+    loadSelectorPool();
+    if (ct === 'first') document.getElementById('choice_type').value = 'second';
+    else if (ct === 'second') document.getElementById('choice_type').value = 'third';
+    else { document.getElementById('choice_type').value = 'first'; document.getElementById('selector_player').value = parseInt(player)+1; }
+});
+
+document.getElementById('pick-btn').addEventListener('click', async () => {
+    const data = await apiGet('/random_selector_pick');
+    if (data?.success) {
+        const labels = { first: 'First', second: 'Second', third: 'Third' };
+        document.getElementById('selector-pick').textContent =
+            `Selected: ${data.selected.game_title} (Player ${data.selected.player}, ${labels[data.selected.choice_type]} Choice)`;
+    } else {
+        document.getElementById('selector-pick').textContent = data?.message || 'No games added.';
+    }
+});
+
+document.getElementById('clear-choices-btn').addEventListener('click', async () => {
+    await apiPost('/clear_selector_pool', {});
+    document.getElementById('selector-pick').textContent = '';
+    document.getElementById('selector-msg').textContent = 'Cleared.';
+    loadSelectorPool();
+});
+</script>
+</body>
+</html>

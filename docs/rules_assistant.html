@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rules Assistant</title>
+    <link rel="stylesheet" href="./styles.css">
+    <style>
+        .spinner { display:none; margin-top:10px; font-style:italic; color:#ccc; }
+        #cost-line { font-size:0.75em; color:#666; margin-top:6px; display:none; }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+        <h1>Rules Assistant</h1>
+        <p style="color:#ccc; font-size:0.9em;">Select a game, upload its rulebook PDF once, then ask questions.</p>
+
+        <label for="game_select">Game:</label>
+        <select id="game_select">
+            <option value="">-- Select a game --</option>
+        </select>
+        <div id="rulebook-status" style="margin-bottom:4px; display:none;">
+            <span id="rulebook-badge" class="rulebook-indicator"></span>
+        </div>
+    </div>
+
+    <div class="form-container" id="ask-section" style="display:none;">
+        <h2>Ask a Question</h2>
+        <label for="question">Your question:</label>
+        <textarea id="question" rows="3" placeholder="e.g. What happens when a player runs out of resources?"></textarea>
+        <button id="ask-btn">Ask</button>
+        <div class="spinner" id="spinner">Thinking...</div>
+        <div id="sources-line" style="font-size:0.8em; color:#aaa; margin-top:8px; display:none;"></div>
+        <div id="answer-box"></div>
+        <div id="cost-line"></div>
+    </div>
+
+    <div class="form-container" id="upload-section" style="display:none;">
+        <h2>Upload Rulebook PDF</h2>
+        <label for="pdf_file">PDF file:</label>
+        <input type="file" id="pdf_file" accept=".pdf">
+        <button class="btn-blue" id="upload-btn">Upload</button>
+        <div id="upload-status" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="form-container" id="bgg-link-section" style="display:none;">
+        <h2>Add BGG Thread Content (optional)</h2>
+        <p style="color:#ccc; font-size:0.9em; margin:0 0 12px;">
+            The AI already uses its training knowledge of BGG discussions.
+            Paste specific threads here if you want it to reference them exactly.
+        </p>
+        <textarea id="bgg_forum_paste" rows="8" placeholder="Paste specific BGG thread text here (optional)..."></textarea>
+        <button class="btn-blue" id="set-bgg-btn">Save</button>
+        <button class="btn-red" id="clear-bgg-btn">Clear All</button>
+        <div id="bgg-link-status" style="margin-top:8px;"></div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+
+        let selectedGame = '';
+        let gameHasRulebook = false;
+
+        async function loadGames() {
+            const data = await apiGet('/api/rules_assistant_data');
+            if (!data) return;
+            const sel = document.getElementById('game_select');
+            data.game_titles.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g;
+                opt.textContent = g;
+                opt.dataset.hasRulebook = data.has_rulebook[g] ? 'true' : 'false';
+                opt.dataset.hasBgg = data.has_bgg[g] ? 'true' : 'false';
+                sel.appendChild(opt);
+            });
+        }
+        loadGames();
+
+        document.getElementById('game_select').addEventListener('change', function() {
+            selectedGame = this.value;
+            const opt = this.options[this.selectedIndex];
+            gameHasRulebook = opt.dataset.hasRulebook === 'true';
+
+            if (!selectedGame) {
+                ['rulebook-status','ask-section','upload-section','bgg-link-section'].forEach(id => {
+                    document.getElementById(id).style.display = 'none';
+                });
+                return;
+            }
+
+            document.getElementById('rulebook-status').style.display = '';
+            const badge = document.getElementById('rulebook-badge');
+            if (gameHasRulebook) {
+                badge.textContent = 'Rulebook uploaded';
+                badge.className = 'rulebook-indicator has-rulebook';
+                document.getElementById('ask-section').style.display = '';
+            } else {
+                badge.textContent = 'No rulebook — upload one below';
+                badge.className = 'rulebook-indicator no-rulebook';
+                document.getElementById('ask-section').style.display = 'none';
+            }
+            document.getElementById('upload-section').style.display = '';
+            document.getElementById('bgg-link-section').style.display = '';
+            document.getElementById('answer-box').style.display = 'none';
+            document.getElementById('answer-box').textContent = '';
+            document.getElementById('sources-line').style.display = 'none';
+        });
+
+        document.getElementById('upload-btn').addEventListener('click', async () => {
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            const file = document.getElementById('pdf_file').files[0];
+            if (!file) { alert('Choose a PDF file.'); return; }
+            const btn = document.getElementById('upload-btn');
+            const status = document.getElementById('upload-status');
+            btn.disabled = true;
+            btn.textContent = 'Uploading...';
+            const formData = new FormData();
+            formData.append('game_title', selectedGame);
+            formData.append('pdf_file', file);
+            const data = await apiUpload('/upload_rulebook', formData);
+            btn.disabled = false;
+            btn.textContent = 'Upload';
+            if (data?.success) {
+                status.textContent = data.message;
+                status.className = 'status-ok';
+                gameHasRulebook = true;
+                document.getElementById('rulebook-badge').textContent = 'Rulebook uploaded';
+                document.getElementById('rulebook-badge').className = 'rulebook-indicator has-rulebook';
+                const opt = document.querySelector(`#game_select option[value="${selectedGame}"]`);
+                if (opt) opt.dataset.hasRulebook = 'true';
+                document.getElementById('ask-section').style.display = '';
+            } else {
+                status.textContent = data?.message || 'Upload failed';
+                status.className = 'status-err';
+            }
+        });
+
+        document.getElementById('ask-btn').addEventListener('click', async () => {
+            const question = document.getElementById('question').value.trim();
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            if (!question) { alert('Enter a question.'); return; }
+            const btn = document.getElementById('ask-btn');
+            btn.disabled = true;
+            document.getElementById('spinner').style.display = '';
+            document.getElementById('answer-box').style.display = 'none';
+            document.getElementById('cost-line').style.display = 'none';
+
+            const data = await apiPost('/ask_rules', { game_title: selectedGame, question });
+            btn.disabled = false;
+            document.getElementById('spinner').style.display = 'none';
+
+            if (data?.success) {
+                document.getElementById('sources-line').textContent = 'Sources: ' + data.sources;
+                document.getElementById('sources-line').style.display = '';
+                document.getElementById('answer-box').textContent = data.answer;
+                document.getElementById('answer-box').style.display = '';
+                document.getElementById('cost-line').textContent =
+                    'Cost: NZ$' + data.cost_nzd.toFixed(4) + ' (US$' + data.cost_usd.toFixed(4) + ' approx)';
+                document.getElementById('cost-line').style.display = '';
+            } else {
+                document.getElementById('sources-line').style.display = 'none';
+                document.getElementById('answer-box').textContent = 'Error: ' + (data?.message || 'unknown');
+                document.getElementById('answer-box').style.display = '';
+            }
+        });
+
+        document.getElementById('set-bgg-btn').addEventListener('click', async () => {
+            const text = document.getElementById('bgg_forum_paste').value.trim();
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            if (!text) { alert('Paste some BGG thread text first.'); return; }
+            const btn = document.getElementById('set-bgg-btn');
+            btn.disabled = true; btn.textContent = 'Saving...';
+            const data = await apiPost('/cache_bgg_threads', { game_title: selectedGame, threads_text: text });
+            btn.disabled = false; btn.textContent = 'Save';
+            const status = document.getElementById('bgg-link-status');
+            if (data?.success) {
+                status.textContent = 'Saved!'; status.className = 'status-ok';
+                document.getElementById('bgg_forum_paste').value = '';
+            } else {
+                status.textContent = data?.message || 'Save failed'; status.className = 'status-err';
+            }
+        });
+
+        document.getElementById('clear-bgg-btn').addEventListener('click', async () => {
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            if (!confirm('Clear all pasted BGG content for ' + selectedGame + '?')) return;
+            const data = await apiPost('/clear_bgg_cache', { game_title: selectedGame });
+            const status = document.getElementById('bgg-link-status');
+            if (data?.success) { status.textContent = 'Cleared.'; status.className = 'status-ok'; }
+            else { status.textContent = data?.message || 'Failed'; status.className = 'status-err'; }
+        });
+    </script>
+</body>
+</html>
