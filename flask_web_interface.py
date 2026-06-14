@@ -1996,7 +1996,7 @@ def api_recent_plays():
         SELECT date_played, game_title, result, level, my_score, bot_score, notes
         FROM games
         ORDER BY date_played DESC, id DESC
-        LIMIT 20
+        LIMIT 5
     """)
     rows = cur.fetchall()
     cur.close()
