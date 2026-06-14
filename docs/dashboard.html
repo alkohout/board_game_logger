@@ -96,6 +96,15 @@
     </nav>
 </div>
 
+<!-- Recent Plays -->
+<div class="form-container" id="recent-plays-container">
+    <h2>Recent Plays</h2>
+    <table id="recent-table">
+        <thead><tr><th>Date</th><th>Game</th><th>Result</th><th>Level</th></tr></thead>
+        <tbody id="recent-body"><tr><td colspan="4" style="color:#aaa;">Loading...</td></tr></tbody>
+    </table>
+</div>
+
 <!-- Selector -->
 <div class="form-container">
     <h2>Boardgame Selector</h2>
@@ -160,6 +169,19 @@ async function loadStats() {
 }
 loadStats();
 
+async function loadRecentPlays() {
+    const rows = await apiGet('/api/recent_plays');
+    const tbody = document.getElementById('recent-body');
+    if (!rows?.length) { tbody.innerHTML = '<tr><td colspan="4" style="color:#aaa;">No plays yet.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `<tr>
+        <td>${r.date_played}</td>
+        <td>${r.game_title}</td>
+        <td>${r.result}</td>
+        <td>${r.level}</td>
+    </tr>`).join('');
+}
+loadRecentPlays();
+
 // Autocompletes
 setupAutocomplete('game_title', 'add_suggestions');
 setupAutocomplete('search_title', 'search_suggestions');
@@ -189,6 +211,7 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         status.style.display = '';
         ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
         loadStats();
+        loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
     } else {
         status.textContent = 'Error: ' + (data?.message || 'unknown');

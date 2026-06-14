@@ -1988,6 +1988,30 @@ def api_rules_assistant_data():
     return jsonify({'game_titles': game_titles, 'has_rulebook': has_rulebook, 'has_bgg': has_bgg})
 
 
+@app.route('/api/recent_plays')
+def api_recent_plays():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT date_played, game_title, result, level, my_score, bot_score, notes
+        FROM games
+        ORDER BY date_played DESC, id DESC
+        LIMIT 20
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify([{
+        'date_played': str(r[0]),
+        'game_title': r[1],
+        'result': r[2] or '',
+        'level': r[3] or '',
+        'my_score': r[4] or '',
+        'bot_score': r[5] or '',
+        'notes': r[6] or '',
+    } for r in rows])
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
