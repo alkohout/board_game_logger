@@ -61,8 +61,8 @@
 
     <h2>Recent Plays</h2>
     <table id="recent-table">
-        <thead><tr><th>Date</th><th>Game</th><th>Result</th><th>Level</th></tr></thead>
-        <tbody id="recent-body"><tr><td colspan="4" style="color:#aaa;">Loading...</td></tr></tbody>
+        <thead><tr><th>Game</th><th>Result</th><th>Level</th></tr></thead>
+        <tbody id="recent-body"><tr><td colspan="3" style="color:#aaa;">Loading...</td></tr></tbody>
     </table>
 </div>
 
@@ -171,8 +171,7 @@ async function loadRecentPlays() {
     const tbody = document.getElementById('recent-body');
     if (!rows?.length) { tbody.innerHTML = '<tr><td colspan="4" style="color:#aaa;">No plays yet.</td></tr>'; return; }
     tbody.innerHTML = rows.map(r => `<tr>
-        <td>${r.date_played}</td>
-        <td>${r.game_title}</td>
+        <td>${r.date_played} — ${r.game_title}</td>
         <td>${r.result}</td>
         <td>${r.level}</td>
     </tr>`).join('');
