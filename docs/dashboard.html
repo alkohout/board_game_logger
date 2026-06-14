@@ -170,8 +170,13 @@ async function loadRecentPlays() {
     const rows = await apiGet('/api/recent_plays');
     const tbody = document.getElementById('recent-body');
     if (!rows?.length) { tbody.innerHTML = '<tr><td colspan="4" style="color:#aaa;">No plays yet.</td></tr>'; return; }
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function fmtDate(s) {
+        const [, m, d] = s.split('-');
+        return `${parseInt(d)} ${months[parseInt(m)-1]}`;
+    }
     tbody.innerHTML = rows.map(r => `<tr>
-        <td style="white-space:nowrap">${r.date_played.slice(5)}</td>
+        <td style="white-space:nowrap">${fmtDate(r.date_played)}</td>
         <td>${r.game_title}</td>
         <td>${r.result}</td>
         <td>${r.level}</td>
