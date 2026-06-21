@@ -1,5 +1,6 @@
 .gitignore
-_pycache__
+__pycache__/
+*.pyc
 create.sh
 games_2023.csv
 games_2023.xlsx
@@ -7,3 +8,6 @@ games_played_long_format.csv
 games.csv
 load_into_sql.ipynb
 .env
+*.sql
+ssh.sh
+static/rulebooks/
