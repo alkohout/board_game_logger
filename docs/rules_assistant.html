@@ -10,7 +10,12 @@
     <style>
         .spinner { display:none; margin-top:10px; font-style:italic; color:#ccc; }
         #cost-line { font-size:0.75em; color:#666; margin-top:6px; display:none; }
+        #answer-box h1,#answer-box h2,#answer-box h3 { margin:10px 0 4px; }
+        #answer-box ul,#answer-box ol { padding-left:20px; margin:4px 0; }
+        #answer-box p { margin:6px 0; }
+        #answer-box strong { color:#fff; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <div class="form-container">
@@ -188,7 +193,7 @@
             if (data?.success) {
                 document.getElementById('sources-line').textContent = 'Sources: ' + data.sources;
                 document.getElementById('sources-line').style.display = '';
-                document.getElementById('answer-box').textContent = data.answer;
+                document.getElementById('answer-box').innerHTML = marked.parse(data.answer);
                 document.getElementById('answer-box').style.display = '';
                 document.getElementById('cost-line').textContent =
                     'Cost: NZ$' + data.cost_nzd.toFixed(4) + ' (US$' + data.cost_usd.toFixed(4) + ' approx)';
