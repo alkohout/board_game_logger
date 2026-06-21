@@ -10,10 +10,10 @@
     <style>
         .spinner { display:none; margin-top:10px; font-style:italic; color:#ccc; }
         #cost-line { font-size:0.75em; color:#666; margin-top:6px; display:none; }
-        #answer-box h1,#answer-box h2,#answer-box h3 { margin:10px 0 4px; }
-        #answer-box ul,#answer-box ol { padding-left:20px; margin:4px 0; }
-        #answer-box p { margin:6px 0; }
-        #answer-box strong { color:#fff; }
+        .chat-q { font-weight:bold; color:#ccc; margin:12px 0 4px; font-size:0.9em; }
+        .chat-a { background:rgba(255,255,255,0.08); border-radius:6px; padding:12px; line-height:1.6; }
+        .chat-a strong { color:#fff; }
+        .chat-meta { font-size:0.72em; color:#666; margin-top:4px; }
     </style>
     <script>
         function renderAnswer(text) {
@@ -47,12 +47,12 @@
 
     <div class="form-container" id="ask-section" style="display:none;">
         <h2>Ask a Question</h2>
+        <div id="conversation" style="margin-bottom:16px;"></div>
         <label for="question">Your question:</label>
         <textarea id="question" rows="3" placeholder="e.g. What happens when a player runs out of resources?"></textarea>
         <button id="ask-btn">Ask</button>
+        <button id="new-convo-btn" class="btn-back" style="display:none; margin-left:8px;">New Conversation</button>
         <div class="spinner" id="spinner">Thinking...</div>
-        <div id="sources-line" style="font-size:0.8em; color:#aaa; margin-top:8px; display:none;"></div>
-        <div id="answer-box"></div>
         <div id="cost-line"></div>
     </div>
 
@@ -150,9 +150,7 @@
             updateBadge(rulebookNamesData[selectedGame] || []);
             document.getElementById('upload-section').style.display = '';
             document.getElementById('bgg-link-section').style.display = '';
-            document.getElementById('answer-box').style.display = 'none';
-            document.getElementById('answer-box').textContent = '';
-            document.getElementById('sources-line').style.display = 'none';
+            clearConversation();
         });
 
         document.getElementById('upload-btn').addEventListener('click', async () => {
@@ -188,6 +186,27 @@
             }
         });
 
+        let conversationHistory = [];
+
+        function appendToConversation(question, answer, sources, costNzd, costUsd) {
+            const div = document.createElement('div');
+            div.innerHTML = `
+                <div class="chat-q">Q: ${question}</div>
+                <div class="chat-a">${renderAnswer(answer)}</div>
+                <div class="chat-meta">Sources: ${sources} &nbsp;|&nbsp; Cost: NZ$${costNzd.toFixed(4)}</div>
+            `;
+            document.getElementById('conversation').appendChild(div);
+        }
+
+        function clearConversation() {
+            conversationHistory = [];
+            document.getElementById('conversation').innerHTML = '';
+            document.getElementById('cost-line').style.display = 'none';
+            document.getElementById('new-convo-btn').style.display = 'none';
+        }
+
+        document.getElementById('new-convo-btn').addEventListener('click', clearConversation);
+
         document.getElementById('ask-btn').addEventListener('click', async () => {
             const question = document.getElementById('question').value.trim();
             if (!selectedGame) { alert('Select a game first.'); return; }
@@ -195,25 +214,26 @@
             const btn = document.getElementById('ask-btn');
             btn.disabled = true;
             document.getElementById('spinner').style.display = '';
-            document.getElementById('answer-box').style.display = 'none';
             document.getElementById('cost-line').style.display = 'none';
 
-            const data = await apiPost('/ask_rules', { game_title: selectedGame, question });
+            const data = await apiPost('/ask_rules', { game_title: selectedGame, question, history: conversationHistory });
             btn.disabled = false;
             document.getElementById('spinner').style.display = 'none';
 
             if (data?.success) {
-                document.getElementById('sources-line').textContent = 'Sources: ' + data.sources;
-                document.getElementById('sources-line').style.display = '';
-                document.getElementById('answer-box').innerHTML = renderAnswer(data.answer);
-                document.getElementById('answer-box').style.display = 'block';
+                conversationHistory.push({ role: 'user', content: question });
+                conversationHistory.push({ role: 'assistant', content: data.answer });
+                appendToConversation(question, data.answer, data.sources, data.cost_nzd, data.cost_usd);
+                document.getElementById('question').value = '';
+                document.getElementById('new-convo-btn').style.display = '';
                 document.getElementById('cost-line').textContent =
-                    'Cost: NZ$' + data.cost_nzd.toFixed(4) + ' (US$' + data.cost_usd.toFixed(4) + ' approx)';
+                    'Total turns: ' + (conversationHistory.length / 2) + ' | Last cost: NZ$' + data.cost_nzd.toFixed(4);
                 document.getElementById('cost-line').style.display = '';
             } else {
-                document.getElementById('sources-line').style.display = 'none';
-                document.getElementById('answer-box').textContent = 'Error: ' + (data?.message || 'unknown');
-                document.getElementById('answer-box').style.display = 'block';
+                const errDiv = document.createElement('div');
+                errDiv.style.cssText = 'color:#ff6b6b; margin-top:8px;';
+                errDiv.textContent = 'Error: ' + (data?.message || 'unknown');
+                document.getElementById('conversation').appendChild(errDiv);
             }
         });
 

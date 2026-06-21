@@ -1722,18 +1722,32 @@ def ask_rules():
         if not api_key:
             return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
 
-        # Build user message: one document block per rulebook + optional BGG text + question
-        user_content = [
+        # PDF blocks with cache_control so follow-up questions reuse the cached context
+        pdf_blocks = [
             {
                 'type': 'document',
-                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': r[0]}
+                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': r[0]},
+                'cache_control': {'type': 'ephemeral'}
             }
             for r in rows
         ]
-        question_text = question
+
+        history = data.get('history', [])  # [{role, content}] of previous text turns
+
+        # First user message always includes PDFs + optional BGG + first question
+        first_question = history[0]['content'] if history else question
+        first_content = list(pdf_blocks)
         if bgg_section:
-            question_text = f'BGG Rules Forum Discussions:\n{bgg_section}\n\nQuestion: {question}'
-        user_content.append({'type': 'text', 'text': question_text})
+            first_content.append({'type': 'text', 'text': f'BGG Rules Forum Discussions:\n{bgg_section}'})
+        first_content.append({'type': 'text', 'text': first_question})
+
+        messages = [{'role': 'user', 'content': first_content}]
+        # Replay subsequent history turns as plain text
+        for turn in history[1:]:
+            messages.append({'role': turn['role'], 'content': turn['content']})
+        # Add current question if this is a follow-up
+        if history:
+            messages.append({'role': 'user', 'content': question})
 
         book_names = ', '.join(r[2] or 'Rulebook' for r in rows)
         sources_used = book_names + (' + pasted BGG content' if bgg_section else ' + training knowledge')
@@ -1751,7 +1765,7 @@ def ask_rules():
                 f'Just give the answer. Briefly note the source inline where useful '
                 f'(e.g. "Rulebook p.12" or "BGG community consensus") but never open with an explanation of what you do or don\'t have.'
             ),
-            messages=[{'role': 'user', 'content': user_content}]
+            messages=messages
         )
         # Haiku pricing: $0.80/MTok input, $4.00/MTok output
         input_cost  = response.usage.input_tokens  * 0.80 / 1_000_000
