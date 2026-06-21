@@ -109,7 +109,6 @@ nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
     border-radius: 6px;
     padding: 16px;
     margin-top: 16px;
-    white-space: pre-wrap;
     line-height: 1.6;
     display: none;
 }

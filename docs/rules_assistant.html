@@ -194,14 +194,14 @@
                 document.getElementById('sources-line').textContent = 'Sources: ' + data.sources;
                 document.getElementById('sources-line').style.display = '';
                 document.getElementById('answer-box').innerHTML = marked.parse(data.answer);
-                document.getElementById('answer-box').style.display = '';
+                document.getElementById('answer-box').style.display = 'block';
                 document.getElementById('cost-line').textContent =
                     'Cost: NZ$' + data.cost_nzd.toFixed(4) + ' (US$' + data.cost_usd.toFixed(4) + ' approx)';
                 document.getElementById('cost-line').style.display = '';
             } else {
                 document.getElementById('sources-line').style.display = 'none';
                 document.getElementById('answer-box').textContent = 'Error: ' + (data?.message || 'unknown');
-                document.getElementById('answer-box').style.display = '';
+                document.getElementById('answer-box').style.display = 'block';
             }
         });
 
