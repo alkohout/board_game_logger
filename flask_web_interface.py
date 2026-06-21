@@ -1632,6 +1632,25 @@ def upload_rulebook():
     return jsonify({'success': True, 'message': f'"{rulebook_name}" saved for {game_title}'})
 
 
+@app.route('/delete_rulebook', methods=['POST'])
+def delete_rulebook():
+    try:
+        data = request.get_json()
+        game_title = (data.get('game_title') or '').strip()
+        rulebook_name = (data.get('rulebook_name') or '').strip()
+        if not game_title or not rulebook_name:
+            return jsonify({'success': False, 'message': 'game_title and rulebook_name required'}), 400
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM rulebooks WHERE game_title = %s AND rulebook_name = %s", (game_title, rulebook_name))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/clear_bgg_cache', methods=['POST'])
 def clear_bgg_cache():
     try:

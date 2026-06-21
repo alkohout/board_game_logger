@@ -78,13 +78,26 @@
             if (names && names.length) {
                 badge.textContent = names.length === 1 ? '1 rulebook uploaded' : `${names.length} rulebooks uploaded`;
                 badge.className = 'rulebook-indicator has-rulebook';
-                namesEl.textContent = '(' + names.join(', ') + ')';
+                namesEl.innerHTML = names.map(n =>
+                    `${n} <button onclick="deleteRulebook('${n}')" style="font-size:0.75em; padding:1px 6px; margin-left:2px;" class="btn-red">✕</button>`
+                ).join(' &nbsp;');
                 document.getElementById('ask-section').style.display = '';
             } else {
                 badge.textContent = 'No rulebook — upload one below';
                 badge.className = 'rulebook-indicator no-rulebook';
-                namesEl.textContent = '';
+                namesEl.innerHTML = '';
                 document.getElementById('ask-section').style.display = 'none';
+            }
+        }
+
+        async function deleteRulebook(rulebookName) {
+            if (!confirm(`Delete "${rulebookName}" for ${selectedGame}?`)) return;
+            const data = await apiPost('/delete_rulebook', { game_title: selectedGame, rulebook_name: rulebookName });
+            if (data?.success) {
+                rulebookNamesData[selectedGame] = (rulebookNamesData[selectedGame] || []).filter(n => n !== rulebookName);
+                updateBadge(rulebookNamesData[selectedGame]);
+            } else {
+                alert('Delete failed: ' + (data?.message || 'unknown'));
             }
         }
 
