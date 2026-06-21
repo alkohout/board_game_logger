@@ -1707,8 +1707,7 @@ def ask_rules():
         user_content = [
             {
                 'type': 'document',
-                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': r[0]},
-                'title': r[2] or 'Rulebook'
+                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': r[0]}
             }
             for r in rows
         ]
