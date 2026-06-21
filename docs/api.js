@@ -45,16 +45,24 @@ async function apiPost(path, body) {
 
 // Upload with multipart (for rulebook PDF)
 async function apiUpload(path, formData) {
-    const token = getToken();
-    const headers = {};
-    if (token) headers['Authorization'] = 'Bearer ' + token;
-    const resp = await fetch(API_BASE + path, { method: 'POST', headers, body: formData });
-    if (resp.status === 401) {
-        localStorage.removeItem('bg_token');
-        window.location.href = './index.html';
-        return null;
+    try {
+        const token = getToken();
+        const headers = {};
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+        const resp = await fetch(API_BASE + path, { method: 'POST', headers, body: formData });
+        if (resp.status === 401) {
+            localStorage.removeItem('bg_token');
+            window.location.href = './index.html';
+            return null;
+        }
+        if (resp.status === 413) {
+            return { success: false, message: 'File too large — try a smaller PDF.' };
+        }
+        return await resp.json();
+    } catch (e) {
+        console.error('apiUpload failed for', path, e);
+        return { success: false, message: 'Upload failed: ' + e.message };
     }
-    return resp.json();
 }
 
 // Autocomplete helper

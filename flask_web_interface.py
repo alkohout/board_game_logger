@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 load_dotenv()
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB upload limit
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB upload limit
 app.secret_key = os.getenv('SECRET_KEY')
 
 CORS(app,
