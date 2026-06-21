@@ -24,6 +24,7 @@
         </select>
         <div id="rulebook-status" style="margin-bottom:4px; display:none;">
             <span id="rulebook-badge" class="rulebook-indicator"></span>
+            <span id="rulebook-names" style="font-size:0.85em; color:#aaa; margin-left:8px;"></span>
         </div>
     </div>
 
@@ -40,6 +41,8 @@
 
     <div class="form-container" id="upload-section" style="display:none;">
         <h2>Upload Rulebook PDF</h2>
+        <label for="rulebook_name">Book name (e.g. Base, Expansion):</label>
+        <input type="text" id="rulebook_name" placeholder="Base" value="Base">
         <label for="pdf_file">PDF file:</label>
         <input type="file" id="pdf_file" accept=".pdf">
         <button class="btn-blue" id="upload-btn">Upload</button>
@@ -67,10 +70,28 @@
 
         let selectedGame = '';
         let gameHasRulebook = false;
+        let rulebookNamesData = {};
+
+        function updateBadge(names) {
+            const badge = document.getElementById('rulebook-badge');
+            const namesEl = document.getElementById('rulebook-names');
+            if (names && names.length) {
+                badge.textContent = names.length === 1 ? '1 rulebook uploaded' : `${names.length} rulebooks uploaded`;
+                badge.className = 'rulebook-indicator has-rulebook';
+                namesEl.textContent = '(' + names.join(', ') + ')';
+                document.getElementById('ask-section').style.display = '';
+            } else {
+                badge.textContent = 'No rulebook — upload one below';
+                badge.className = 'rulebook-indicator no-rulebook';
+                namesEl.textContent = '';
+                document.getElementById('ask-section').style.display = 'none';
+            }
+        }
 
         async function loadGames() {
             const data = await apiGet('/api/rules_assistant_data');
             if (!data) return;
+            rulebookNamesData = data.rulebook_names || {};
             const sel = document.getElementById('game_select');
             data.game_titles.forEach(g => {
                 const opt = document.createElement('option');
@@ -96,16 +117,7 @@
             }
 
             document.getElementById('rulebook-status').style.display = '';
-            const badge = document.getElementById('rulebook-badge');
-            if (gameHasRulebook) {
-                badge.textContent = 'Rulebook uploaded';
-                badge.className = 'rulebook-indicator has-rulebook';
-                document.getElementById('ask-section').style.display = '';
-            } else {
-                badge.textContent = 'No rulebook — upload one below';
-                badge.className = 'rulebook-indicator no-rulebook';
-                document.getElementById('ask-section').style.display = 'none';
-            }
+            updateBadge(rulebookNamesData[selectedGame] || []);
             document.getElementById('upload-section').style.display = '';
             document.getElementById('bgg-link-section').style.display = '';
             document.getElementById('answer-box').style.display = 'none';
@@ -117,12 +129,14 @@
             if (!selectedGame) { alert('Select a game first.'); return; }
             const file = document.getElementById('pdf_file').files[0];
             if (!file) { alert('Choose a PDF file.'); return; }
+            const rulebookName = (document.getElementById('rulebook_name').value.trim()) || 'Base';
             const btn = document.getElementById('upload-btn');
             const status = document.getElementById('upload-status');
             btn.disabled = true;
             btn.textContent = 'Uploading...';
             const formData = new FormData();
             formData.append('game_title', selectedGame);
+            formData.append('rulebook_name', rulebookName);
             formData.append('pdf_file', file);
             const data = await apiUpload('/upload_rulebook', formData);
             btn.disabled = false;
@@ -131,11 +145,13 @@
                 status.textContent = data.message;
                 status.className = 'status-ok';
                 gameHasRulebook = true;
-                document.getElementById('rulebook-badge').textContent = 'Rulebook uploaded';
-                document.getElementById('rulebook-badge').className = 'rulebook-indicator has-rulebook';
+                if (!rulebookNamesData[selectedGame]) rulebookNamesData[selectedGame] = [];
+                if (!rulebookNamesData[selectedGame].includes(rulebookName)) {
+                    rulebookNamesData[selectedGame].push(rulebookName);
+                }
+                updateBadge(rulebookNamesData[selectedGame]);
                 const opt = document.querySelector(`#game_select option[value="${selectedGame}"]`);
                 if (opt) opt.dataset.hasRulebook = 'true';
-                document.getElementById('ask-section').style.display = '';
             } else {
                 status.textContent = data?.message || 'Upload failed';
                 status.className = 'status-err';

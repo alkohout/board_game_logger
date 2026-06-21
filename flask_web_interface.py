@@ -1602,6 +1602,7 @@ def debug_rulebooks():
 @app.route('/upload_rulebook', methods=['POST'])
 def upload_rulebook():
     game_title = request.form.get('game_title', '').strip()
+    rulebook_name = (request.form.get('rulebook_name') or 'Base').strip()
     if not game_title:
         return jsonify({'success': False, 'message': 'Game title required'}), 400
     if 'pdf_file' not in request.files or request.files['pdf_file'].filename == '':
@@ -1617,18 +1618,18 @@ def upload_rulebook():
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO rulebooks (game_title, pdf_data)
-            VALUES (%s, %s)
-            ON CONFLICT (game_title) DO UPDATE
+            INSERT INTO rulebooks (game_title, rulebook_name, pdf_data)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (game_title, rulebook_name) DO UPDATE
                 SET pdf_data = EXCLUDED.pdf_data,
                     uploaded_at = NOW()
-        """, (game_title, pdf_b64))
+        """, (game_title, rulebook_name, pdf_b64))
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         return jsonify({'success': False, 'message': f'DB error: {str(e)}'}), 500
-    return jsonify({'success': True, 'message': f'Rulebook saved for {game_title}'})
+    return jsonify({'success': True, 'message': f'"{rulebook_name}" saved for {game_title}'})
 
 
 @app.route('/clear_bgg_cache', methods=['POST'])
@@ -1684,33 +1685,40 @@ def ask_rules():
 
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT pdf_data, bgg_forum_cache FROM rulebooks WHERE game_title = %s", (game_title,))
-        row = cur.fetchone()
+        cur.execute("""
+            SELECT pdf_data, bgg_forum_cache, rulebook_name
+            FROM rulebooks WHERE game_title = %s AND pdf_data IS NOT NULL
+            ORDER BY rulebook_name
+        """, (game_title,))
+        rows = cur.fetchall()
         cur.close()
         conn.close()
 
-        if not row or not row[0]:
+        if not rows:
             return jsonify({'success': False, 'message': f'No rulebook found for {game_title} — try re-uploading'}), 404
 
-        pdf_b64, bgg_section = row[0], (row[1] or '')
+        bgg_section = next((r[1] for r in rows if r[1]), '')
 
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
             return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
 
-        # Build user message: PDF document + optional BGG text + question
+        # Build user message: one document block per rulebook + optional BGG text + question
         user_content = [
             {
                 'type': 'document',
-                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': pdf_b64}
+                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': r[0]},
+                'title': r[2] or 'Rulebook'
             }
+            for r in rows
         ]
         question_text = question
         if bgg_section:
             question_text = f'BGG Rules Forum Discussions:\n{bgg_section}\n\nQuestion: {question}'
         user_content.append({'type': 'text', 'text': question_text})
 
-        sources_used = 'rulebook' + (' + pasted BGG content' if bgg_section else ' + training knowledge')
+        book_names = ', '.join(r[2] or 'Rulebook' for r in rows)
+        sources_used = book_names + (' + pasted BGG content' if bgg_section else ' + training knowledge')
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model='claude-haiku-4-5-20251001',
@@ -1975,17 +1983,18 @@ def api_rules_assistant_data():
     cur.execute("SELECT DISTINCT game_title FROM games ORDER BY game_title")
     game_titles = [row[0] for row in cur.fetchall()]
     try:
-        cur.execute("SELECT game_title, bgg_forum_cache FROM rulebooks WHERE pdf_data IS NOT NULL")
+        cur.execute("SELECT game_title, rulebook_name, bgg_forum_cache FROM rulebooks WHERE pdf_data IS NOT NULL ORDER BY game_title, rulebook_name")
         rulebook_rows = cur.fetchall()
     except Exception:
         conn.rollback()
         cur.execute("SELECT game_title FROM rulebooks WHERE pdf_data IS NOT NULL")
-        rulebook_rows = [(r[0], None) for r in cur.fetchall()]
+        rulebook_rows = [(r[0], 'Base', None) for r in cur.fetchall()]
     cur.close()
     conn.close()
     has_rulebook = {g: any(r[0] == g for r in rulebook_rows) for g in game_titles}
-    has_bgg = {g: any(r[0] == g and r[1] for r in rulebook_rows) for g in game_titles}
-    return jsonify({'game_titles': game_titles, 'has_rulebook': has_rulebook, 'has_bgg': has_bgg})
+    rulebook_names = {g: [r[1] for r in rulebook_rows if r[0] == g] for g in game_titles}
+    has_bgg = {g: any(r[0] == g and r[2] for r in rulebook_rows) for g in game_titles}
+    return jsonify({'game_titles': game_titles, 'has_rulebook': has_rulebook, 'rulebook_names': rulebook_names, 'has_bgg': has_bgg})
 
 
 @app.route('/api/recent_plays')
