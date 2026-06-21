@@ -15,7 +15,19 @@
         #answer-box p { margin:6px 0; }
         #answer-box strong { color:#fff; }
     </style>
-    <script src="./marked.min.js"></script>
+    <script>
+        function renderAnswer(text) {
+            const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            return text.split('\n').map(line => {
+                if (/^### /.test(line)) return `<strong>${esc(line.slice(4))}</strong>`;
+                if (/^## /.test(line))  return `<strong>${esc(line.slice(3))}</strong>`;
+                if (/^# /.test(line))   return `<strong>${esc(line.slice(2))}</strong>`;
+                if (/^- /.test(line))   return `&nbsp;&nbsp;• ${esc(line.slice(2))}`;
+                const l = esc(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                return l || '<br>';
+            }).join('<br>');
+        }
+    </script>
 </head>
 <body>
     <div class="form-container">
@@ -193,7 +205,7 @@
             if (data?.success) {
                 document.getElementById('sources-line').textContent = 'Sources: ' + data.sources;
                 document.getElementById('sources-line').style.display = '';
-                document.getElementById('answer-box').innerHTML = marked.parse(data.answer);
+                document.getElementById('answer-box').innerHTML = renderAnswer(data.answer);
                 document.getElementById('answer-box').style.display = 'block';
                 document.getElementById('cost-line').textContent =
                     'Cost: NZ$' + data.cost_nzd.toFixed(4) + ' (US$' + data.cost_usd.toFixed(4) + ' approx)';
