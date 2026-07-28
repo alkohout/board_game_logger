@@ -1,6 +1,7 @@
 .gitignore
 __pycache__/
 *.pyc
+.venv/
 create.sh
 games_2023.csv
 games_2023.xlsx
