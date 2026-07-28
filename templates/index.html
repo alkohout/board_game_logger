@@ -96,7 +96,7 @@
         <h1>Log a Game</h1>
         <form action="/add" method="post">
             <label for="date_played">Date Played:</label>
-            <input type="date" id="date_played" name="date_played" required>
+            <input type="date" id="date_played" name="date_played" value="{{ today }}" required>
             <br><br>
             <label for="game_title">Game Title:</label>
             <input type="text" id="game_title" name="game_title" required autocomplete="off" style="border: none;">
