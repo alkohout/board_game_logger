@@ -6,18 +6,8 @@ import anthropic
 import base64
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 load_dotenv()
-
-# The server may run in UTC (e.g. Oracle Cloud), which is up to 13 hours behind
-# local time, so "today" must be computed in the local zone rather than the
-# server's. Configurable via the TIMEZONE env var.
-LOCAL_TZ = ZoneInfo(os.getenv('TIMEZONE', 'Pacific/Auckland'))
-
-
-def today_local():
-    return datetime.now(LOCAL_TZ).date()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB upload limit
@@ -177,7 +167,7 @@ def index():
     top_games = cur.fetchall()
 
     # Calculate date boundaries for the current week, month, and year
-    today = today_local()
+    today = date.today()
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     start_of_year = today.replace(month=1, day=1)
@@ -379,7 +369,7 @@ def index():
         'index.html',
         game_titles=sorted(game_titles),
         top_games=top_games,
-        today=today_local().isoformat(),
+        today=date.today().isoformat(),
         games_this_week=games_this_week,
         games_this_month=games_this_month,
         games_this_year=games_this_year,
@@ -1295,7 +1285,7 @@ def games_overview():
     cur = conn.cursor()
 
     # Calculate date boundaries
-    today = today_local()
+    today = date.today()
     # Current Periods
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
@@ -1405,7 +1395,7 @@ def search_last_played():
     last_played_date = cur.fetchone()[0]
     
     # Calculate date boundaries for the current week, month, and year
-    today = today_local()
+    today = datetime.now().date()
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     start_of_year = today.replace(month=1, day=1)
