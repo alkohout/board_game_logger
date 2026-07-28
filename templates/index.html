@@ -126,27 +126,38 @@
         <table style="border-collapse: separate; border-spacing: 20px 0;">
           <tr>
             <th style="padding: 10px; text-align: left;"></th>
+            <th style="padding: 10px; text-align: left;">Day</th>
             <th style="padding: 10px; text-align: left;">Week</th>
             <th style="padding: 10px; text-align: left;">Month</th>
             <th style="padding: 10px; text-align: left;">Year</th>
           </tr>
           <tr>
             <td style="padding: 10px;">Current</td>
+            <td style="padding: 10px;">{{games_today}}</td>
             <td style="padding: 10px;">{{games_this_week}}</td>
             <td style="padding: 10px;">{{games_this_month}}</td>
             <td style="padding: 10px;">{{games_this_year}}</td>
           </tr>
           <tr>
             <td style="padding: 10px;">Previous</td>
+            <td style="padding: 10px;">{{games_yesterday}}</td>
             <td style="padding: 10px;">{{games_last_week}}</td>
             <td style="padding: 10px;">{{games_last_month}}</td>
             <td style="padding: 10px;">{{games_last_year}}</td>
           </tr>
           <tr>
             <td style="padding: 10px;">Average</td>
+            <td style="padding: 10px;">{{daily_avg}}</td>
             <td style="padding: 10px;">{{weekly_avg}}</td>
             <td style="padding: 10px;">{{monthly_avg}}</td>
             <td style="padding: 10px;">{{yearly_avg}}</td>
+          </tr>
+          <tr style="color:#FFD54F;">
+            <td style="padding: 10px;">Record</td>
+            <td style="padding: 10px;">{{records.day.count}}<br><span style="font-size:0.7em; color:#bbb;">{{records.day.start.strftime('%-d %b %y') if records.day.start}}</span></td>
+            <td style="padding: 10px;">{{records.week.count}}<br><span style="font-size:0.7em; color:#bbb;">{{'w/c ' + records.week.start.strftime('%-d %b %y') if records.week.start}}</span></td>
+            <td style="padding: 10px;">{{records.month.count}}<br><span style="font-size:0.7em; color:#bbb;">{{records.month.start.strftime('%b %Y') if records.month.start}}</span></td>
+            <td style="padding: 10px;">{{records.year.count}}<br><span style="font-size:0.7em; color:#bbb;">{{records.year.start.strftime('%Y') if records.year.start}}</span></td>
           </tr>
         </table>
 

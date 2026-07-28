@@ -7,6 +7,14 @@
     <link rel="stylesheet" href="./styles.css">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        /* Five columns in a 400px container: tighten the default spacing. */
+        #played-table { border-spacing: 6px 0; }
+        #played-table th, #played-table td { padding: 6px 2px; }
+        .record-row td { color: #FFD54F; }
+        .record-when { display: block; font-size: 0.7em; color: #bbb; white-space: nowrap; }
+        .record-now  { color: #90EE90; font-weight: bold; }
+    </style>
 </head>
 <body>
 
@@ -38,11 +46,12 @@
 <!-- Stats -->
 <div class="form-container" id="stats-container">
     <h2>Games played</h2>
-    <table>
-        <tr><th></th><th>Week</th><th>Month</th><th>Year</th></tr>
-        <tr><td>Current</td><td id="s-tw">—</td><td id="s-tm">—</td><td id="s-ty">—</td></tr>
-        <tr><td>Previous</td><td id="s-lw">—</td><td id="s-lm">—</td><td id="s-ly">—</td></tr>
-        <tr><td>Average</td><td id="s-aw">—</td><td id="s-am">—</td><td id="s-ay">—</td></tr>
+    <table id="played-table">
+        <tr><th></th><th>Day</th><th>Week</th><th>Month</th><th>Year</th></tr>
+        <tr><td>Current</td><td id="s-td">—</td><td id="s-tw">—</td><td id="s-tm">—</td><td id="s-ty">—</td></tr>
+        <tr><td>Previous</td><td id="s-yd">—</td><td id="s-lw">—</td><td id="s-lm">—</td><td id="s-ly">—</td></tr>
+        <tr><td>Average</td><td id="s-ad">—</td><td id="s-aw">—</td><td id="s-am">—</td><td id="s-ay">—</td></tr>
+        <tr class="record-row"><td>Record</td><td id="s-rd">—</td><td id="s-rw">—</td><td id="s-rm">—</td><td id="s-ry">—</td></tr>
     </table>
 
     <h2>Most Played</h2>
@@ -142,12 +151,48 @@ const _now = new Date();
 document.getElementById('date_played').value =
     `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// "When" label under each all-time record. `iso` is the first day of the
+// period the record was set in.
+function recordWhen(unit, iso) {
+    if (!iso) return '';
+    const [y, m, dd] = iso.split('-');
+    const mon = MONTHS[parseInt(m) - 1];
+    if (unit === 'day')   return `${parseInt(dd)} ${mon} ${y.slice(2)}`;
+    if (unit === 'week')  return `w/c ${parseInt(dd)} ${mon} ${y.slice(2)}`;
+    if (unit === 'month') return `${mon} ${y}`;
+    return y;
+}
+
+function renderRecords(rec, gp) {
+    if (!rec) return;
+    const units = [
+        ['day',   'rd', 'td', gp.today],
+        ['week',  'rw', 'tw', gp.this_week],
+        ['month', 'rm', 'tm', gp.this_month],
+        ['year',  'ry', 'ty', gp.this_year]
+    ];
+    units.forEach(([unit, recId, curId, current]) => {
+        const r = rec[unit] || { count: 0, start: null };
+        document.getElementById('s-' + recId).innerHTML =
+            `${r.count}<span class="record-when">${recordWhen(unit, r.start)}</span>`;
+        // Flag the current period once it matches or beats the old best.
+        const cell = document.getElementById('s-' + curId);
+        cell.className = (r.count && current >= r.count) ? 'record-now' : '';
+        cell.title = (r.count && current >= r.count) ? 'Record!' : '';
+    });
+}
+
 // Load dashboard stats
 async function loadStats() {
     const d = await apiGet('/api/dashboard');
     if (!d) return;
     const gp = d.games_played;
     const mp = d.most_played;
+    document.getElementById('s-td').textContent = gp.today;
+    document.getElementById('s-yd').textContent = gp.yesterday;
+    document.getElementById('s-ad').textContent = gp.daily_avg;
     document.getElementById('s-tw').textContent = gp.this_week;
     document.getElementById('s-tm').textContent = gp.this_month;
     document.getElementById('s-ty').textContent = gp.this_year;
@@ -157,6 +202,7 @@ async function loadStats() {
     document.getElementById('s-aw').textContent = gp.weekly_avg;
     document.getElementById('s-am').textContent = gp.monthly_avg;
     document.getElementById('s-ay').textContent = gp.yearly_avg;
+    renderRecords(d.records, gp);
     const rows = [
         ['tw', mp.this_week], ['lw', mp.last_week], ['tm', mp.this_month],
         ['lm', mp.last_month], ['ty', mp.this_year], ['ly', mp.last_year]

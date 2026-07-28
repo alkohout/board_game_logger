@@ -19,6 +19,30 @@ LOCAL_TZ = ZoneInfo(os.getenv('TIMEZONE', 'Pacific/Auckland'))
 def today_local():
     return datetime.now(LOCAL_TZ).date()
 
+# Every play before this date is a bulk backfill of old plays, all stamped
+# 2023-01-01, so it would win every "most ever" record. Records ignore it.
+RECORDS_START = date(2024, 1, 1)
+
+
+def period_records(cur):
+    """Best-ever plays per calendar day/week/month/year. Weeks start Monday,
+    matching how the current-period counts are worked out."""
+    def best(period_expr):
+        cur.execute(f"""
+            SELECT {period_expr} AS period, COUNT(*) AS plays
+            FROM games WHERE date_played >= %s
+            GROUP BY period ORDER BY plays DESC, period DESC LIMIT 1
+        """, (RECORDS_START,))
+        row = cur.fetchone()
+        return {'count': row[1], 'start': row[0]} if row else {'count': 0, 'start': None}
+
+    return {
+        'day': best("date_played"),
+        'week': best("date_trunc('week', date_played::timestamp)::date"),
+        'month': best("date_trunc('month', date_played::timestamp)::date"),
+        'year': best("date_trunc('year', date_played::timestamp)::date"),
+    }
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB upload limit
 app.secret_key = os.getenv('SECRET_KEY')
@@ -395,6 +419,21 @@ def index():
         most_played_game_last_year = None
         last_year_play_count = 0
 
+    # Games played today and yesterday, plus the all-time bests
+    cur.execute("SELECT COUNT(*) FROM games WHERE date_played = %s", (today,))
+    games_today = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM games WHERE date_played = %s", (today - timedelta(days=1),))
+    games_yesterday = cur.fetchone()[0]
+
+    num_days = (today - date(2024, 1, 1)).days
+    if num_days > 0:
+        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (date(2024, 1, 1), today))
+        daily_avg = round(cur.fetchone()[0] / num_days, 1)
+    else:
+        daily_avg = 0
+
+    records = period_records(cur)
+
     cur.close()
     conn.close()
     return render_template(
@@ -402,6 +441,10 @@ def index():
         game_titles=sorted(game_titles),
         top_games=top_games,
         today=today_local().isoformat(),
+        games_today=games_today,
+        games_yesterday=games_yesterday,
+        daily_avg=daily_avg,
+        records=records,
         games_this_week=games_this_week,
         games_this_month=games_this_month,
         games_this_year=games_this_year,
@@ -1841,6 +1884,8 @@ def api_dashboard():
         return {'game': row[0], 'count': row[1]} if row else {'game': None, 'count': 0}
 
     # Period counts
+    td = count("SELECT COUNT(*) FROM games WHERE date_played = %s", today)
+    yd = count("SELECT COUNT(*) FROM games WHERE date_played = %s", today - timedelta(days=1))
     tw = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_week)
     tm = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_month)
     ty = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_year)
@@ -1871,15 +1916,28 @@ def api_dashboard():
     else:
         yearly_avg = 0
 
+    num_days = (today - ref).days
+    if num_days > 0:
+        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref, today))
+        daily_avg = round(cur.fetchone()[0] / num_days, 1)
+    else:
+        daily_avg = 0
+
+    records = {k: {'count': v['count'], 'start': v['start'].isoformat() if v['start'] else None}
+               for k, v in period_records(cur).items()}
+
     result = {
         'game_titles': game_titles,
         'top_games': top_games,
         'today': today.isoformat(),
         'games_played': {
+            'today': td, 'yesterday': yd,
             'this_week': tw, 'this_month': tm, 'this_year': ty,
             'last_week': lw, 'last_month': lm, 'last_year': ly,
+            'daily_avg': daily_avg,
             'weekly_avg': weekly_avg, 'monthly_avg': monthly_avg, 'yearly_avg': yearly_avg,
         },
+        'records': records,
         'most_played': {
             'this_week': most_played(start_of_week),
             'last_week': most_played(start_of_last_week, end_of_last_week),
