@@ -7,8 +7,17 @@ import anthropic
 import base64
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 load_dotenv()
+
+# The server runs in UTC (Oracle Cloud), which is 12-13 hours behind NZ, so
+# "today" must be computed in the local zone. Override with TIMEZONE env var.
+LOCAL_TZ = ZoneInfo(os.getenv('TIMEZONE', 'Pacific/Auckland'))
+
+
+def today_local():
+    return datetime.now(LOCAL_TZ).date()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB upload limit
@@ -190,7 +199,7 @@ def index():
     top_games = cur.fetchall()
 
     # Calculate date boundaries for the current week, month, and year
-    today = date.today()
+    today = today_local()
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     start_of_year = today.replace(month=1, day=1)
@@ -392,7 +401,7 @@ def index():
         'index.html',
         game_titles=sorted(game_titles),
         top_games=top_games,
-        today=date.today().isoformat(),
+        today=today_local().isoformat(),
         games_this_week=games_this_week,
         games_this_month=games_this_month,
         games_this_year=games_this_year,
@@ -1308,7 +1317,7 @@ def games_overview():
     cur = conn.cursor()
 
     # Calculate date boundaries
-    today = date.today()
+    today = today_local()
     # Current Periods
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
@@ -1418,7 +1427,7 @@ def search_last_played():
     last_played_date = cur.fetchone()[0]
     
     # Calculate date boundaries for the current week, month, and year
-    today = datetime.now().date()
+    today = today_local()
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     start_of_year = today.replace(month=1, day=1)
@@ -1809,7 +1818,7 @@ def api_dashboard():
     """)
     top_games = [{'game': r[0], 'count': r[1]} for r in cur.fetchall()]
 
-    today = date.today()
+    today = today_local()
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     start_of_year = today.replace(month=1, day=1)
@@ -1908,7 +1917,7 @@ def api_add_game():
 def api_games_overview():
     conn = get_db_connection()
     cur = conn.cursor()
-    today = date.today()
+    today = today_local()
     start_of_week = today - timedelta(days=today.weekday())
     start_of_month = today.replace(day=1)
     start_of_year = today.replace(month=1, day=1)
