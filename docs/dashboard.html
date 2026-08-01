@@ -322,52 +322,90 @@ document.getElementById('save-note-btn').addEventListener('click', async () => {
     }
 });
 
-// Selector
-async function loadSelectorPool() {
-    const data = await apiGet('/get_selector_pool');
-    const ul = document.getElementById('selector-pool');
-    if (!data?.pool?.length) { ul.innerHTML = '<li>No choices added yet.</li>'; return; }
-    const labels = { first: 'First', second: 'Second', third: 'Third' };
-    ul.innerHTML = data.pool.map(e => `<li>Player ${e.player} — ${labels[e.choice_type]} Choice: ${e.game_title}</li>`).join('');
-}
-loadSelectorPool();
+// Selector — the pool lives in this browser. The API kept it in process
+// memory, which the two gunicorn workers don't share, so choices appeared
+// and vanished depending on which worker answered.
+const SELECTOR_KEY = 'bg_selector_pool';
+const CHOICE_LABELS = { first: 'First', second: 'Second', third: 'Third' };
+const CHOICE_ORDER  = { first: 1, second: 2, third: 3 };
+const CHOICE_WEIGHT = { first: 3, second: 2, third: 1 };
 
-document.getElementById('add-choice-btn').addEventListener('click', async () => {
-    const title = document.getElementById('selector_game_title').value.trim();
+function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function readPool() {
+    try {
+        const pool = JSON.parse(localStorage.getItem(SELECTOR_KEY) || '[]');
+        return Array.isArray(pool) ? pool : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function writePool(pool) {
+    pool.sort((a, b) => a.player - b.player || CHOICE_ORDER[a.choice_type] - CHOICE_ORDER[b.choice_type]);
+    localStorage.setItem(SELECTOR_KEY, JSON.stringify(pool));
+    renderPool(pool);
+}
+
+function renderPool(pool) {
+    const ul = document.getElementById('selector-pool');
+    if (!pool.length) { ul.innerHTML = '<li>No choices added yet.</li>'; return; }
+    ul.innerHTML = pool.map(e =>
+        `<li>Player ${e.player} — ${CHOICE_LABELS[e.choice_type]} Choice: ${escapeHtml(e.game_title)}</li>`
+    ).join('');
+}
+renderPool(readPool());
+
+function selectorMsg(text, ok) {
+    const msg = document.getElementById('selector-msg');
+    msg.textContent = text;
+    msg.className = ok ? 'status-ok' : 'status-err';
+}
+
+document.getElementById('add-choice-btn').addEventListener('click', () => {
+    const input = document.getElementById('selector_game_title');
+    const title = input.value.trim();
     const ct = document.getElementById('choice_type').value;
-    const player = document.getElementById('selector_player').value;
-    if (!title) { alert('Enter a game title.'); return; }
-    const token = getToken();
-    const resp = await fetch(API_BASE + '/add_selector_game', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': 'Bearer ' + token },
-        body: `game_title=${encodeURIComponent(title)}&choice_type=${ct}&player=${player}`
-    });
-    const data = await resp.json();
-    document.getElementById('selector-msg').textContent = data.message;
-    document.getElementById('selector_game_title').value = '';
-    loadSelectorPool();
+    const player = parseInt(document.getElementById('selector_player').value, 10);
+    if (!title) { selectorMsg('Enter a game title.', false); return; }
+    if (!player || player < 1) { selectorMsg('Enter a valid player number.', false); return; }
+
+    const pool = readPool();
+    if (pool.some(e => e.player === player && e.choice_type === ct)) {
+        // Leave the typed title and the dropdown alone so the entry isn't lost.
+        selectorMsg(`Player ${player} already has a ${ct} choice.`, false);
+        return;
+    }
+
+    pool.push({ player, choice_type: ct, game_title: title });
+    writePool(pool);
+    selectorMsg(`Player ${player} ${ct} choice added: "${title}"`, true);
+    input.value = '';
     if (ct === 'first') document.getElementById('choice_type').value = 'second';
     else if (ct === 'second') document.getElementById('choice_type').value = 'third';
-    else { document.getElementById('choice_type').value = 'first'; document.getElementById('selector_player').value = parseInt(player)+1; }
+    else { document.getElementById('choice_type').value = 'first'; document.getElementById('selector_player').value = player + 1; }
 });
 
-document.getElementById('pick-btn').addEventListener('click', async () => {
-    const data = await apiGet('/random_selector_pick');
-    if (data?.success) {
-        const labels = { first: 'First', second: 'Second', third: 'Third' };
-        document.getElementById('selector-pick').textContent =
-            `Selected: ${data.selected.game_title} (Player ${data.selected.player}, ${labels[data.selected.choice_type]} Choice)`;
-    } else {
-        document.getElementById('selector-pick').textContent = data?.message || 'No games added.';
-    }
+document.getElementById('pick-btn').addEventListener('click', () => {
+    const pool = readPool();
+    const out = document.getElementById('selector-pick');
+    if (!pool.length) { out.textContent = 'No games added.'; return; }
+    // First choices are three times as likely as thirds.
+    const weighted = [];
+    pool.forEach(e => { for (let i = 0; i < CHOICE_WEIGHT[e.choice_type]; i++) weighted.push(e); });
+    const sel = weighted[Math.floor(Math.random() * weighted.length)];
+    out.textContent = `Selected: ${sel.game_title} (Player ${sel.player}, ${CHOICE_LABELS[sel.choice_type]} Choice)`;
 });
 
-document.getElementById('clear-choices-btn').addEventListener('click', async () => {
-    await apiPost('/clear_selector_pool', {});
+document.getElementById('clear-choices-btn').addEventListener('click', () => {
+    localStorage.removeItem(SELECTOR_KEY);
+    renderPool([]);
     document.getElementById('selector-pick').textContent = '';
-    document.getElementById('selector-msg').textContent = 'Cleared.';
-    loadSelectorPool();
+    document.getElementById('selector_player').value = 1;
+    document.getElementById('choice_type').value = 'first';
+    selectorMsg('Cleared.', true);
 });
 </script>
 </body>

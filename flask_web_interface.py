@@ -76,6 +76,10 @@ def require_login():
         return
     return redirect(url_for('login'))
 
+# Per-process state: gunicorn runs 2 workers, so each holds its own copy and
+# a choice added through one worker is invisible to the other. The GitHub
+# Pages dashboard now keeps its selector pool in localStorage instead; these
+# routes remain only for the older server-rendered page below.
 selector_pool = []
 selector_choices = []
 
