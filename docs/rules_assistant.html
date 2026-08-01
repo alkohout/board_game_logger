@@ -35,10 +35,11 @@
         <h1>Rules Assistant</h1>
         <p style="color:#ccc; font-size:0.9em;">Select a game, upload its rulebook PDF once, then ask questions.</p>
 
-        <label for="game_select">Game:</label>
-        <select id="game_select">
-            <option value="">-- Select a game --</option>
-        </select>
+        <label for="game_search">Game:</label>
+        <div style="position:relative;">
+            <input type="text" id="game_search" autocomplete="off" placeholder="Start typing a game title...">
+            <div id="game_suggestions" class="autocomplete-suggestions"></div>
+        </div>
         <div id="rulebook-status" style="margin-bottom:4px; display:none;">
             <span id="rulebook-badge" class="rulebook-indicator"></span>
             <span id="rulebook-names" style="font-size:0.85em; color:#aaa; margin-left:8px;"></span>
@@ -112,46 +113,98 @@
             const data = await apiPost('/delete_rulebook', { game_title: selectedGame, rulebook_name: rulebookName });
             if (data?.success) {
                 rulebookNamesData[selectedGame] = (rulebookNamesData[selectedGame] || []).filter(n => n !== rulebookName);
+                hasRulebookData[selectedGame] = rulebookNamesData[selectedGame].length > 0;
                 updateBadge(rulebookNamesData[selectedGame]);
             } else {
                 alert('Delete failed: ' + (data?.message || 'unknown'));
             }
         }
 
+        let allGames = [];
+        let hasRulebookData = {};
+
         async function loadGames() {
             const data = await apiGet('/api/rules_assistant_data');
             if (!data) return;
             rulebookNamesData = data.rulebook_names || {};
-            const sel = document.getElementById('game_select');
-            data.game_titles.forEach(g => {
-                const opt = document.createElement('option');
-                opt.value = g;
-                opt.textContent = g;
-                opt.dataset.hasRulebook = data.has_rulebook[g] ? 'true' : 'false';
-                opt.dataset.hasBgg = data.has_bgg[g] ? 'true' : 'false';
-                sel.appendChild(opt);
-            });
+            hasRulebookData = data.has_rulebook || {};
+            allGames = data.game_titles || [];
         }
         loadGames();
 
-        document.getElementById('game_select').addEventListener('change', function() {
-            selectedGame = this.value;
-            const opt = this.options[this.selectedIndex];
-            gameHasRulebook = opt.dataset.hasRulebook === 'true';
+        const searchInput = document.getElementById('game_search');
+        const suggestBox = document.getElementById('game_suggestions');
 
-            if (!selectedGame) {
-                ['rulebook-status','ask-section','upload-section','bgg-link-section'].forEach(id => {
-                    document.getElementById(id).style.display = 'none';
+        // Type to filter the game list instead of scrolling a long dropdown.
+        function showSuggestions() {
+            const q = searchInput.value.trim().toLowerCase();
+            const matches = allGames
+                .filter(g => g.toLowerCase().includes(q))
+                .sort((a, b) => {
+                    // Titles that start with what you typed come first.
+                    const as = a.toLowerCase().startsWith(q), bs = b.toLowerCase().startsWith(q);
+                    if (as !== bs) return as ? -1 : 1;
+                    return a.localeCompare(b);
                 });
-                return;
-            }
+            suggestBox.innerHTML = '';
+            matches.forEach(g => {
+                const div = document.createElement('div');
+                div.className = 'autocomplete-suggestion';
+                div.dataset.title = g;
+                div.textContent = hasRulebookData[g] ? g + ' ✔' : g;
+                // mousedown fires before blur, so the pick isn't lost to the box closing.
+                div.addEventListener('mousedown', e => { e.preventDefault(); pickGame(g); });
+                suggestBox.appendChild(div);
+            });
+        }
 
+        function hideSuggestions() { suggestBox.innerHTML = ''; }
+
+        function pickGame(title) {
+            searchInput.value = title;
+            hideSuggestions();
+            searchInput.blur();
+            selectGame(title);
+        }
+
+        function clearSelection() {
+            selectedGame = '';
+            gameHasRulebook = false;
+            ['rulebook-status','ask-section','upload-section','bgg-link-section'].forEach(id => {
+                document.getElementById(id).style.display = 'none';
+            });
+        }
+
+        function selectGame(title) {
+            if (title === selectedGame) return;
+            selectedGame = title;
+            gameHasRulebook = !!hasRulebookData[title];
             document.getElementById('rulebook-status').style.display = '';
             updateBadge(rulebookNamesData[selectedGame] || []);
             document.getElementById('upload-section').style.display = '';
             document.getElementById('bgg-link-section').style.display = '';
             clearConversation();
+        }
+
+        searchInput.addEventListener('focus', showSuggestions);
+        searchInput.addEventListener('input', () => {
+            showSuggestions();
+            // Typing the full title counts as picking it; anything else deselects.
+            const typed = searchInput.value.trim().toLowerCase();
+            const exact = allGames.find(g => g.toLowerCase() === typed);
+            if (exact) selectGame(exact);
+            else if (selectedGame) clearSelection();
         });
+        searchInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const first = suggestBox.querySelector('.autocomplete-suggestion');
+                if (first) pickGame(first.dataset.title);
+            } else if (e.key === 'Escape') {
+                hideSuggestions();
+            }
+        });
+        searchInput.addEventListener('blur', hideSuggestions);
 
         document.getElementById('upload-btn').addEventListener('click', async () => {
             if (!selectedGame) { alert('Select a game first.'); return; }
@@ -178,8 +231,7 @@
                     rulebookNamesData[selectedGame].push(rulebookName);
                 }
                 updateBadge(rulebookNamesData[selectedGame]);
-                const opt = document.querySelector(`#game_select option[value="${selectedGame}"]`);
-                if (opt) opt.dataset.hasRulebook = 'true';
+                hasRulebookData[selectedGame] = true;
             } else {
                 status.textContent = data?.message || 'Upload failed';
                 status.className = 'status-err';
