@@ -22,7 +22,7 @@
 <div class="form-container">
     <button class="btn-back" onclick="logout()" style="float:right; font-size:0.8em; padding:6px 12px;">Logout</button>
     <h1>Log a Game</h1>
-    <label>Date Played:</label>
+    <label>Date Played: <span id="date-weekday" style="color:#FFD54F; font-weight:normal;"></span></label>
     <input type="date" id="date_played">
     <label>Game Title:</label>
     <div style="position:relative;">
@@ -152,6 +152,27 @@ document.getElementById('date_played').value =
     `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+// Spell out the day being logged. A date that is silently a day out — the
+// symptom when a cached page defaulted the field in UTC — is then obvious.
+function showDateWeekday() {
+    const el = document.getElementById('date-weekday');
+    const val = document.getElementById('date_played').value;
+    if (!val) { el.textContent = ''; return; }
+    const [y, m, d] = val.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);          // local, not UTC
+    const todayVal = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+    let suffix = '';
+    if (val === todayVal) suffix = ' (today)';
+    else {
+        const diff = Math.round((new Date(_now.getFullYear(), _now.getMonth(), _now.getDate()) - dt) / 86400000);
+        if (diff === 1) suffix = ' (yesterday)';
+    }
+    el.textContent = `${DAYS[dt.getDay()]} ${d} ${MONTHS[m - 1]}${suffix}`;
+}
+document.getElementById('date_played').addEventListener('change', showDateWeekday);
+showDateWeekday();
 
 // "When" label under each all-time record. `iso` is the first day of the
 // period the record was set in.
