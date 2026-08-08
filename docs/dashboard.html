@@ -14,6 +14,36 @@
         .record-row td { color: #FFD54F; }
         .record-when { display: block; font-size: 0.7em; color: #bbb; white-space: nowrap; }
         .record-now  { color: #90EE90; font-weight: bold; }
+
+        /* Score tracker — a sheet you fill in at the table, so it has to work
+           one-handed on a phone. 16px inputs stop iOS zooming on focus. */
+        #score-wrap { overflow-x: auto; margin-bottom: 10px; }
+        #score-table { border-collapse: collapse; border-spacing: 0; width: auto; min-width: 100%; }
+        #score-table th, #score-table td {
+            border: 1px solid rgba(255,255,255,0.2); padding: 0; text-align: center;
+        }
+        #score-table .rownum {
+            color: #888; font-size: 0.8em; padding: 0 6px; min-width: 24px;
+            background: rgba(255,255,255,0.05);
+        }
+        .pname {
+            width: 100%; min-width: 76px; box-sizing: border-box; margin: 0; padding: 6px 4px;
+            border: none; border-radius: 0; background: rgba(255,255,255,0.12);
+            color: #fff; font-size: 16px; font-weight: bold; text-align: center;
+        }
+        .pdel {
+            background: none; color: #c98; padding: 0 4px; margin: 0;
+            font-size: 0.75em; line-height: 1; cursor: pointer;
+        }
+        .pdel:hover { background: none; color: #ff6b6b; }
+        .scell {
+            width: 100%; min-width: 76px; box-sizing: border-box; margin: 0; padding: 8px 4px;
+            border: none; border-radius: 0; background: transparent;
+            color: #fff; font-size: 16px; text-align: center;
+        }
+        .scell:focus { background: rgba(255,255,255,0.15); outline: none; }
+        #score-table tfoot td { padding: 8px 4px; font-weight: bold; font-size: 1.05em; }
+        .leader { color: #90EE90; }
     </style>
 </head>
 <body>
@@ -41,6 +71,21 @@
     <textarea id="notes" rows="4" placeholder="Add any notes here..."></textarea>
     <button id="log-btn">Log Game</button>
     <p id="log-status" class="status-ok" style="display:none;"></p>
+</div>
+
+<!-- Score Tracker -->
+<div class="form-container">
+    <h2>Score Tracker</h2>
+    <div id="score-wrap">
+        <table id="score-table">
+            <thead><tr id="score-head"></tr></thead>
+            <tbody id="score-body"></tbody>
+            <tfoot><tr id="score-foot"></tr></tfoot>
+        </table>
+    </div>
+    <button id="add-player-btn">+ Player</button>
+    <button id="add-row-btn">+ Row</button>
+    <button class="btn-red" id="clear-scores-btn">Clear</button>
 </div>
 
 <!-- Stats -->
@@ -322,6 +367,159 @@ document.getElementById('search-nonempty-btn').addEventListener('click', async (
     const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
     document.getElementById('search-nonempty-result').innerHTML = renderGameRow(data, '_nonempty');
 });
+
+// Score tracker — lives in this browser, so a mid-game reload doesn't lose the
+// sheet. Built with DOM calls rather than innerHTML so player names never need
+// escaping.
+const SCORE_KEY = 'bg_score_sheet';
+const SCORE_MIN_ROWS = 5;
+
+function blankSheet() {
+    return {
+        players: ['Player 1', 'Player 2'],
+        rows: Array.from({ length: SCORE_MIN_ROWS }, () => ['', '']),
+    };
+}
+
+let sheet = readSheet();
+
+function readSheet() {
+    try {
+        const s = JSON.parse(localStorage.getItem(SCORE_KEY));
+        if (!s || !Array.isArray(s.players) || !Array.isArray(s.rows) || !s.players.length) {
+            return blankSheet();
+        }
+        // Square off the grid in case an older/partial sheet was stored.
+        s.rows = s.rows.map(r => s.players.map((_, i) => (r?.[i] ?? '')));
+        return s;
+    } catch (e) {
+        return blankSheet();
+    }
+}
+
+function saveSheet() { localStorage.setItem(SCORE_KEY, JSON.stringify(sheet)); }
+
+function columnTotal(col) {
+    return sheet.rows.reduce((sum, row) => {
+        const n = parseFloat(row[col]);
+        return sum + (isNaN(n) ? 0 : n);
+    }, 0);
+}
+
+function tidy(n) { return Number.isInteger(n) ? String(n) : n.toFixed(1); }
+
+// Totals update on every keystroke; the table itself is only rebuilt when its
+// shape changes, so typing never steals focus.
+function renderTotals() {
+    const totals = sheet.players.map((_, c) => columnTotal(c));
+    const anyScores = sheet.rows.some(r => r.some(v => v !== '' && !isNaN(parseFloat(v))));
+    const best = anyScores ? Math.max(...totals) : null;
+    const foot = document.getElementById('score-foot');
+    foot.innerHTML = '';
+    foot.appendChild(Object.assign(document.createElement('td'),
+        { className: 'rownum', textContent: 'Σ' }));
+    totals.forEach(t => {
+        const td = document.createElement('td');
+        td.textContent = tidy(t);
+        if (best !== null && t === best) td.className = 'leader';
+        foot.appendChild(td);
+    });
+}
+
+function renderSheet() {
+    const head = document.getElementById('score-head');
+    const body = document.getElementById('score-body');
+    head.innerHTML = '';
+    body.innerHTML = '';
+
+    head.appendChild(document.createElement('th'));   // corner above the row numbers
+    sheet.players.forEach((name, c) => {
+        const th = document.createElement('th');
+        const input = document.createElement('input');
+        input.className = 'pname';
+        input.value = name;
+        input.setAttribute('aria-label', 'Player name');
+        input.addEventListener('input', () => { sheet.players[c] = input.value; saveSheet(); });
+        th.appendChild(input);
+        if (sheet.players.length > 1) {
+            const del = document.createElement('button');
+            del.className = 'pdel';
+            del.textContent = '✕';
+            del.title = 'Remove player';
+            del.addEventListener('click', () => {
+                if (!confirm(`Remove ${sheet.players[c] || 'this player'}?`)) return;
+                sheet.players.splice(c, 1);
+                sheet.rows.forEach(r => r.splice(c, 1));
+                saveSheet();
+                renderSheet();
+            });
+            th.appendChild(del);
+        }
+        head.appendChild(th);
+    });
+
+    sheet.rows.forEach((row, r) => {
+        const tr = document.createElement('tr');
+        tr.appendChild(Object.assign(document.createElement('td'),
+            { className: 'rownum', textContent: r + 1 }));
+        row.forEach((value, c) => {
+            const td = document.createElement('td');
+            const input = document.createElement('input');
+            input.className = 'scell';
+            input.type = 'text';               // text + inputmode: lets "-" and "" behave
+            input.inputMode = 'decimal';
+            input.value = value;
+            input.dataset.row = r;
+            input.dataset.col = c;
+            input.addEventListener('input', () => {
+                sheet.rows[r][c] = input.value;
+                saveSheet();
+                renderTotals();
+            });
+            // Enter walks down the column, adding a row at the bottom.
+            input.addEventListener('keydown', e => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                if (r === sheet.rows.length - 1) addRow();
+                focusCell(r + 1, c);
+            });
+            td.appendChild(input);
+            tr.appendChild(td);
+        });
+        body.appendChild(tr);
+    });
+
+    renderTotals();
+}
+
+function focusCell(r, c) {
+    const cell = document.querySelector(`.scell[data-row="${r}"][data-col="${c}"]`);
+    if (cell) { cell.focus(); cell.select(); }
+}
+
+function addRow() {
+    sheet.rows.push(sheet.players.map(() => ''));
+    saveSheet();
+    renderSheet();
+}
+
+document.getElementById('add-player-btn').addEventListener('click', () => {
+    sheet.players.push(`Player ${sheet.players.length + 1}`);
+    sheet.rows.forEach(r => r.push(''));
+    saveSheet();
+    renderSheet();
+});
+
+document.getElementById('add-row-btn').addEventListener('click', addRow);
+
+document.getElementById('clear-scores-btn').addEventListener('click', () => {
+    if (!confirm('Clear all scores and player names?')) return;
+    sheet = blankSheet();
+    saveSheet();
+    renderSheet();
+});
+
+renderSheet();
 
 // Edit note
 document.getElementById('edit-fetch-btn').addEventListener('click', async () => {
