@@ -293,15 +293,19 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     }
 });
 
-// Search last played
-function renderGameRow(data, prefix) {
+// Search last played. The API suffixes the latest-detailed-entry fields
+// (result_nonempty, notes_nonempty, ...), so suffix — not prefix.
+function renderGameRow(data, suffix) {
     if (!data?.date_played) return '<p>No record found.</p>';
+    const date = data['date_played' + suffix];
+    if (!date) return '<p>No entry with any details recorded yet.</p>';
+    const f = key => data[key + suffix] || '';
     return `
         <table><tr><th></th><th>Result</th><th>Level</th><th>My score</th><th>Bot score</th></tr>
-        <tr><td>${data.date_played}</td><td>${data[prefix+'result']||''}</td><td>${data[prefix+'level']||''}</td><td>${data[prefix+'my_score']||''}</td><td>${data[prefix+'bot_score']||''}</td></tr></table>
+        <tr><td>${date}</td><td>${f('result')}</td><td>${f('level')}</td><td>${f('my_score')}</td><td>${f('bot_score')}</td></tr></table>
         <br><table><tr><th></th><th>Total</th><th>This week</th><th>This month</th><th>This year</th></tr>
         <tr><td>Played</td><td>${data.total_times_played}</td><td>${data.played_this_week}</td><td>${data.played_this_month}</td><td>${data.played_this_year}</td></tr></table>
-        <br>Notes: ${data[prefix+'notes']||''}<br>Ranking: ${data.ranking}`;
+        <br>Notes: ${f('notes')}<br>Ranking: ${data.ranking}`;
 }
 
 document.getElementById('search-btn').addEventListener('click', async () => {
@@ -315,7 +319,7 @@ document.getElementById('search-nonempty-btn').addEventListener('click', async (
     const term = document.getElementById('search_title').value.trim();
     if (!term) return;
     const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
-    document.getElementById('search-nonempty-result').innerHTML = renderGameRow(data, 'nonempty_');
+    document.getElementById('search-nonempty-result').innerHTML = renderGameRow(data, '_nonempty');
 });
 
 // Edit note

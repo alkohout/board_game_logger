@@ -1495,43 +1495,31 @@ def search_last_played():
     cur.execute("SELECT game_title, RANK() OVER (ORDER BY COUNT(*) DESC) FROM games GROUP BY game_title")
     rankings = cur.fetchall()
 
-    print(rankings)
     # Create a dictionary of game titles and their rankings
     rankings_dict = {game[0]: game[1] for game in rankings}
 
     # Get the ranking for the specified game
     ranking = rankings_dict.get(game_title, "Not ranked")
 
-    # Search for the most recent play and notes
+    # The most recent play that actually recorded something, so the hint left
+    # in its notes is easy to find. Ordered by when it was played, not by id,
+    # so a game logged after the fact doesn't jump the queue.
     cur.execute("""
-        SELECT COALESCE( (SELECT g.id FROM games AS g 
-        WHERE g.game_title ILIKE %s 
-        AND ( (g.notes IS NOT NULL AND g.notes <> '' AND g.notes <> 'null') OR
-		(g.result IS NOT NULL AND g.result <> '') )
-	ORDER BY g.id DESC
-        LIMIT 1),0)
+        SELECT date_played, notes, result, level, my_score, bot_score
+        FROM games
+        WHERE game_title ILIKE %s
+          AND ( (notes  IS NOT NULL AND btrim(notes)  NOT IN ('', 'null')) OR
+                (result IS NOT NULL AND btrim(result) NOT IN ('', 'null')) )
+        ORDER BY date_played DESC, id DESC
+        LIMIT 1
     """, (f"%{game_title}%",))
     nonempty = cur.fetchone()
-
-    # Fetch notes
-    cur.execute("SELECT notes FROM games WHERE id = %s", nonempty)
-    notes_nonempty = (res := cur.fetchone()) and res[0]
-
-    # Fetch result
-    cur.execute("SELECT result FROM games WHERE id = %s", (f"{nonempty[0]}",))
-    result_nonempty = (res := cur.fetchone()) and res[0]
-
-    # Fetch level 
-    cur.execute("SELECT level FROM games WHERE id = %s", (f"{nonempty[0]}",))
-    level_nonempty = (res := cur.fetchone()) and res[0]
-
-    # Fetch my_score 
-    cur.execute("SELECT my_score FROM games WHERE id = %s", (f"{nonempty[0]}",))
-    my_score_nonempty = (res := cur.fetchone()) and res[0]
-
-    # Fetch bot_score 
-    cur.execute("SELECT bot_score FROM games WHERE id = %s", (f"{nonempty[0]}",))
-    bot_score_nonempty = (res := cur.fetchone()) and res[0]
+    date_nonempty = nonempty[0] if nonempty else None
+    notes_nonempty = nonempty[1] if nonempty else None
+    result_nonempty = nonempty[2] if nonempty else None
+    level_nonempty = nonempty[3] if nonempty else None
+    my_score_nonempty = nonempty[4] if nonempty else None
+    bot_score_nonempty = nonempty[5] if nonempty else None
 
     cur.close()
     conn.close()
@@ -1545,6 +1533,7 @@ def search_last_played():
 	    'my_score': my_score if my_score else None,
 	    'bot_score': bot_score if bot_score else None,
             'date_played': last_played[0].isoformat(),
+            'date_played_nonempty': date_nonempty.isoformat() if date_nonempty else None,
             'notes_nonempty': notes_nonempty if notes_nonempty else None,
             'result_nonempty': result_nonempty if result_nonempty else None,
 	    'level_nonempty': level_nonempty if level_nonempty else None,
