@@ -3,6 +3,7 @@ from flask_cors import CORS
 import psycopg2
 import os
 import random
+import re
 import anthropic
 import base64
 from dotenv import load_dotenv
@@ -2087,6 +2088,231 @@ def api_rules_assistant_data():
     rulebook_names = {g: [r[1] for r in rulebook_rows if r[0] == g] for g in game_titles}
     has_bgg = {g: any(r[0] == g and r[2] for r in rulebook_rows) for g in game_titles}
     return jsonify({'game_titles': game_titles, 'has_rulebook': has_rulebook, 'rulebook_names': rulebook_names, 'has_bgg': has_bgg})
+
+
+# ── Database Query (AI) ───────────────────────────────────────────────────────
+# Ask a question in English; Claude writes the SQL, we run it read-only and
+# Claude reads the rows back. The model never touches the database itself.
+
+# Writing the SQL is the half that can quietly produce a wrong answer, and its
+# input is just the schema (~770 tokens) however big the result set is — so the
+# expensive model sits on the small half. The write-up step carries all the row
+# data, so it stays on Haiku.
+DB_QUERY_SQL_MODEL = 'claude-opus-5'
+DB_QUERY_SQL_PRICE = (5.00, 25.00)     # USD per million tokens, (input, output)
+DB_QUERY_SQL_EFFORT = 'low'            # raise to medium/high if the SQL gets sloppy
+
+DB_QUERY_WRITEUP_MODEL = 'claude-haiku-4-5'
+DB_QUERY_WRITEUP_PRICE = (1.00, 5.00)
+
+DB_QUERY_MAX_ROWS = 200               # rows handed back to the model and the page
+DB_QUERY_MAX_CELL = 300               # characters per cell, so a stray blob can't flood
+
+# Columns holding base64 PDFs or scraped text — enormous, and useless as answers.
+DB_QUERY_HIDDEN_COLUMNS = {
+    ('rulebooks', 'pdf_data'),
+    ('rulebooks', 'rules_text'),
+    ('rulebooks', 'bgg_forum_cache'),
+}
+
+# Belt to the read-only transaction's braces: a keyword here means the model
+# ignored its instructions, so refuse rather than rely on the database alone.
+DB_QUERY_BANNED = re.compile(
+    r'\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|'
+    r'vacuum|reindex|merge|call|do|lock|listen|notify|prepare|execute|'
+    r'pg_read_file|pg_sleep|dblink|pg_terminate_backend)\b', re.I)
+
+DB_QUERY_NOTES = """
+Notes on this data:
+- Every play before 2024-01-01 is a bulk backfill, all stamped 2023-01-01. It is not
+  real per-day data. Exclude it (date_played >= '2024-01-01') for anything about
+  dates, streaks, or "best ever" records, but include it for lifetime play totals.
+- `result` is free text typed by hand and inconsistent: 'Won', 'won', 'Won ',
+  'Lost.', 'Lost. Romans (me) vs Abbasids (bot)', '-'. Match with
+  btrim(lower(result)) LIKE 'won%' / 'lost%' rather than equality.
+- `my_score`, `bot_score` and `level` are varchar, not numeric, and are often blank.
+  Cast with NULLIF(btrim(x), '')::numeric and guard against non-numeric text.
+- Weeks start Monday. The owner is in New Zealand; today is __TODAY__.
+- `game_title` is free text too, so the same game can appear with slightly different
+  spellings. Prefer ILIKE matching over equality when the user names a game.
+"""
+
+
+def db_query_schema(cur):
+    """Schema description handed to the model, built from the live database."""
+    cur.execute("""
+        SELECT table_name, column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        ORDER BY table_name, ordinal_position
+    """)
+    tables = {}
+    for table, column, dtype in cur.fetchall():
+        note = ' -- HUGE, never select' if (table, column) in DB_QUERY_HIDDEN_COLUMNS else ''
+        tables.setdefault(table, []).append(f'  {column} {dtype}{note}')
+    return '\n\n'.join(f'{t}:\n' + '\n'.join(cols) for t, cols in tables.items())
+
+
+def db_query_check(sql):
+    """Reject anything that isn't a single read-only statement. Returns an error string."""
+    stripped = sql.strip().rstrip(';').strip()
+    if not stripped:
+        return 'No SQL was produced.'
+    if ';' in stripped:
+        return 'Only a single statement is allowed.'
+    if not re.match(r'^(select|with)\b', stripped, re.I):
+        return 'Only SELECT queries are allowed.'
+    banned = DB_QUERY_BANNED.search(stripped)
+    if banned:
+        return f'Query rejected: it contains "{banned.group(0)}".'
+    return None
+
+
+def db_query_run(sql):
+    """Run the query in a read-only transaction. Returns (columns, rows, truncated)."""
+    conn = get_db_connection()
+    try:
+        # Read-only is enforced by Postgres, not by our own parsing of the SQL.
+        conn.set_session(readonly=True, autocommit=False)
+        cur = conn.cursor()
+        cur.execute("SET LOCAL statement_timeout = '15s'")
+        cur.execute(sql)
+        columns = [d[0] for d in cur.description] if cur.description else []
+        raw = cur.fetchmany(DB_QUERY_MAX_ROWS + 1)
+        truncated = len(raw) > DB_QUERY_MAX_ROWS
+        rows = [
+            ['' if v is None else str(v)[:DB_QUERY_MAX_CELL] for v in row]
+            for row in raw[:DB_QUERY_MAX_ROWS]
+        ]
+        conn.rollback()
+        cur.close()
+        return columns, rows, truncated
+    finally:
+        conn.close()
+
+
+def db_query_cost(*priced):
+    """Combined USD/NZD cost. Each argument is (response, usd_in, usd_out) per MTok."""
+    usd = sum(r.usage.input_tokens * price_in / 1_000_000 +
+              r.usage.output_tokens * price_out / 1_000_000
+              for r, price_in, price_out in priced)
+    return usd, usd * float(os.getenv('NZD_RATE', '1.68'))
+
+
+def db_query_text(response):
+    """First text block — skips a thinking block if the model emits one."""
+    return next((b.text for b in response.content if b.type == 'text'), '').strip()
+
+
+@app.route('/api/ask_database', methods=['POST'])
+def api_ask_database():
+    data = request.get_json() or {}
+    question = (data.get('question') or '').strip()
+    history = data.get('history') or []      # [{question, sql, answer}, ...]
+    if not question:
+        return jsonify({'success': False, 'message': 'Question required'}), 400
+
+    api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not api_key:
+        return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    schema = db_query_schema(cur)
+    cur.close()
+    conn.close()
+
+    client = anthropic.Anthropic(api_key=api_key)
+    # Plain replace, not %-formatting: the notes contain LIKE patterns with %.
+    notes = DB_QUERY_NOTES.replace('__TODAY__', today_local().isoformat())
+
+    # 1. Question -> SQL
+    prior = ''.join(
+        f'\nEarlier question: {h.get("question", "")}\nSQL you wrote: {h.get("sql", "")}\n'
+        for h in history[-3:]
+    )
+    try:
+        sql_response = client.messages.create(
+            model=DB_QUERY_SQL_MODEL,
+            max_tokens=8000,
+            output_config={'effort': DB_QUERY_SQL_EFFORT},
+            system=(
+                'You write PostgreSQL for a personal board game log. Reply with one '
+                'SELECT statement and nothing else — no explanation, no markdown fences, '
+                'no trailing semicolon. If the question cannot be answered from this '
+                'schema, reply with exactly "UNSUPPORTED: " followed by a short reason.\n\n'
+                f'Schema:\n{schema}\n{notes}\n'
+                f'Return at most {DB_QUERY_MAX_ROWS} rows — add a LIMIT unless the query '
+                'is already an aggregate. Never select the columns marked HUGE.'
+            ),
+            messages=[{'role': 'user', 'content': f'{prior}\nQuestion: {question}'}],
+        )
+    except anthropic.APIStatusError as e:
+        return jsonify({'success': False, 'message': f'Claude error: {e.message}'}), 502
+    except anthropic.APIConnectionError:
+        return jsonify({'success': False, 'message': 'Could not reach Claude.'}), 502
+
+    sql = db_query_text(sql_response)
+    sql = re.sub(r'^```(?:sql)?|```$', '', sql, flags=re.I | re.M).strip()
+
+    if sql.upper().startswith('UNSUPPORTED'):
+        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        return jsonify({'success': False, 'message': sql.split(':', 1)[-1].strip(),
+                        'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
+
+    problem = db_query_check(sql)
+    if problem:
+        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        return jsonify({'success': False, 'message': problem, 'sql': sql,
+                        'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
+
+    # 2. Run it read-only
+    try:
+        columns, rows, truncated = db_query_run(sql.rstrip(';'))
+    except psycopg2.Error as e:
+        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        return jsonify({'success': False, 'message': f'Query failed: {str(e).strip()}',
+                        'sql': sql, 'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
+
+    # 3. Rows -> plain English
+    table = ' | '.join(columns) + '\n' + '\n'.join(' | '.join(r) for r in rows)
+    if truncated:
+        table += f'\n(only the first {DB_QUERY_MAX_ROWS} rows are shown)'
+    try:
+        answer_response = client.messages.create(
+            model=DB_QUERY_WRITEUP_MODEL,
+            max_tokens=2000,
+            system=(
+                'You answer questions about a personal board game log. You are given the '
+                'question, the SQL that was run, and its results. Answer directly in a '
+                'sentence or two — no preamble, no restating the question, no markdown '
+                'tables (the results are already shown to the user). Quote the actual '
+                'numbers. If the results are empty, say so plainly and, if the reason is '
+                'obvious from the query, say what it is.'
+            ),
+            messages=[{'role': 'user', 'content':
+                       f'Question: {question}\n\nSQL:\n{sql}\n\nResults ({len(rows)} rows):\n{table}'}],
+        )
+    except (anthropic.APIStatusError, anthropic.APIConnectionError):
+        # The data is good even if the write-up failed — return it without prose.
+        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        return jsonify({'success': True, 'sql': sql, 'columns': columns, 'rows': rows,
+                        'truncated': truncated, 'answer': '',
+                        'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
+
+    usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE),
+                          (answer_response, *DB_QUERY_WRITEUP_PRICE))
+    return jsonify({
+        'success': True,
+        'answer': db_query_text(answer_response),
+        'sql': sql,
+        'columns': columns,
+        'rows': rows,
+        'row_count': len(rows),
+        'truncated': truncated,
+        'cost_usd': round(usd, 4),
+        'cost_nzd': round(nzd, 4),
+    })
 
 
 @app.route('/api/recent_plays')

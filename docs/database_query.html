@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Database Query</title>
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        .spinner { display:none; margin-top:10px; font-style:italic; color:#ccc; }
+        #cost-line { font-size:0.75em; color:#888; margin-top:6px; display:none; }
+        .qa { margin-bottom:20px; }
+        .qa-q { font-weight:bold; color:#ccc; margin:12px 0 4px; font-size:0.9em; }
+        .qa-a { background:rgba(255,255,255,0.08); border-radius:6px; padding:12px; line-height:1.6; }
+        .qa-err { background:rgba(192,57,43,0.25); border-radius:6px; padding:12px; }
+        details.sql { margin-top:8px; font-size:0.85em; }
+        details.sql summary { cursor:pointer; color:#90CAF9; }
+        details.sql pre {
+            background:rgba(0,0,0,0.5); padding:10px; border-radius:4px;
+            overflow-x:auto; white-space:pre-wrap; word-break:break-word; margin:6px 0 0;
+        }
+        .results { overflow-x:auto; margin-top:10px; }
+        .results table { border-collapse:collapse; width:auto; min-width:100%; font-size:0.85em; }
+        .results th, .results td {
+            border:1px solid rgba(255,255,255,0.15); padding:4px 8px;
+            text-align:left; white-space:nowrap;
+        }
+        .results th { background:rgba(255,255,255,0.1); }
+        .row-note { font-size:0.75em; color:#888; margin-top:4px; }
+        .examples button {
+            background:rgba(255,255,255,0.12); font-size:0.8em; padding:6px 10px; margin:0 6px 6px 0;
+        }
+        .examples button:hover { background:rgba(255,255,255,0.22); }
+    </style>
+</head>
+<body>
+    <div class="form-container" style="max-width:700px;">
+        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+        <h1>Database Query</h1>
+        <p style="color:#ccc; font-size:0.9em;">
+            Ask anything about your game log in plain English. Claude writes the SQL, it runs
+            read-only against the database, and you get the answer plus the rows behind it.
+        </p>
+
+        <div id="conversation"></div>
+
+        <label for="question">Your question:</label>
+        <textarea id="question" rows="3" placeholder="e.g. Which games have I won the most, and what's my win rate on each?"></textarea>
+        <button id="ask-btn">Ask</button>
+        <button id="new-convo-btn" class="btn-back" style="display:none; margin-left:8px;">New Conversation</button>
+        <div class="spinner" id="spinner">Thinking...</div>
+        <div id="cost-line"></div>
+
+        <div class="examples" style="margin-top:16px;">
+            <p style="color:#aaa; font-size:0.85em; margin-bottom:6px;">Try:</p>
+            <button class="ex">What's my longest streak of consecutive days with a game logged?</button>
+            <button class="ex">Which games have I played once and never again?</button>
+            <button class="ex">What day of the week do I play most?</button>
+            <button class="ex">Which games do I lose most often?</button>
+        </div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+
+        let history = [];   // [{question, sql, answer}] — context for follow-up questions
+
+        const esc = s => String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        function resultsTable(columns, rows, truncated) {
+            if (!columns?.length) return '';
+            if (!rows.length) return '<p class="row-note">No rows returned.</p>';
+            const head = columns.map(c => `<th>${esc(c)}</th>`).join('');
+            const body = rows.map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('');
+            const note = truncated
+                ? '<p class="row-note">Showing the first 200 rows.</p>'
+                : `<p class="row-note">${rows.length} row${rows.length === 1 ? '' : 's'}.</p>`;
+            return `<div class="results"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>${note}`;
+        }
+
+        function addEntry(question, data, errorText) {
+            const div = document.createElement('div');
+            div.className = 'qa';
+            const sqlBlock = data?.sql
+                ? `<details class="sql"><summary>Show SQL</summary><pre>${esc(data.sql)}</pre></details>`
+                : '';
+            const body = errorText
+                ? `<div class="qa-err">${esc(errorText)}</div>`
+                : `<div class="qa-a">${esc(data.answer || '(no summary returned)')}</div>
+                   ${resultsTable(data.columns, data.rows, data.truncated)}`;
+            div.innerHTML = `<div class="qa-q">Q: ${esc(question)}</div>${body}${sqlBlock}`;
+            document.getElementById('conversation').appendChild(div);
+        }
+
+        async function ask() {
+            const input = document.getElementById('question');
+            const question = input.value.trim();
+            if (!question) return;
+            const btn = document.getElementById('ask-btn');
+            btn.disabled = true;
+            document.getElementById('spinner').style.display = '';
+
+            const data = await apiPost('/api/ask_database', { question, history: history.slice(-3) });
+
+            btn.disabled = false;
+            document.getElementById('spinner').style.display = 'none';
+            if (!data) return;   // 401 already redirected
+
+            if (data.success) {
+                addEntry(question, data, null);
+                history.push({ question, sql: data.sql, answer: data.answer });
+                input.value = '';
+            } else {
+                addEntry(question, data, data.message || 'Something went wrong.');
+            }
+
+            document.getElementById('new-convo-btn').style.display = '';
+            if (data.cost_nzd != null) {
+                const cost = document.getElementById('cost-line');
+                cost.textContent = `Questions asked: ${history.length} | Last cost: NZ$${data.cost_nzd.toFixed(4)}`;
+                cost.style.display = '';
+            }
+        }
+
+        document.getElementById('ask-btn').addEventListener('click', ask);
+
+        // Enter sends; Shift+Enter makes a new line.
+        document.getElementById('question').addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+        });
+
+        document.getElementById('new-convo-btn').addEventListener('click', () => {
+            history = [];
+            document.getElementById('conversation').innerHTML = '';
+            document.getElementById('cost-line').style.display = 'none';
+            document.getElementById('new-convo-btn').style.display = 'none';
+        });
+
+        document.querySelectorAll('.examples .ex').forEach(b => {
+            b.addEventListener('click', () => {
+                document.getElementById('question').value = b.textContent;
+                ask();
+            });
+        });
+    </script>
+</body>
+</html>

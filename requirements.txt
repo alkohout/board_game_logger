@@ -2,6 +2,6 @@ flask
 flask-cors
 psycopg2-binary
 python-dotenv
-anthropic
+anthropic>=0.120
 gunicorn
 tzdata
