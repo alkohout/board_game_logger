@@ -13,6 +13,7 @@ import base64
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+from urllib.parse import urlsplit, urlunsplit, quote
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
@@ -190,6 +191,20 @@ def raw_db_connection():
     """A connection with no identity attached. Only auth and migrations want this."""
     database_url = os.getenv('DATABASE_URL')
     if database_url:
+        override_user = os.getenv('DB_USER')
+        if override_user:
+            # A hosted database hands you a URL with the owner role baked in,
+            # and that role bypasses row-level security — so DB_USER has to win
+            # over the URL, or setting it silently does nothing. Host, database
+            # and SSL options are kept exactly as given.
+            parts = urlsplit(database_url)
+            netloc = '{}:{}@{}'.format(quote(override_user, safe=''),
+                                       quote(os.getenv('PASSWORD', ''), safe=''),
+                                       parts.hostname)
+            if parts.port:
+                netloc += ':{}'.format(parts.port)
+            database_url = urlunsplit((parts.scheme, netloc, parts.path,
+                                       parts.query, parts.fragment))
         return psycopg2.connect(database_url)
     return psycopg2.connect(
         host="localhost",
