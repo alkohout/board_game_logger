@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session, g
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, g, has_request_context
 from flask_cors import CORS
 import psycopg2
 import os
@@ -187,16 +187,54 @@ selector_choices = []
 
 
 
-def get_db_connection():
+def raw_db_connection():
+    """A connection with no identity attached. Only auth and migrations want this."""
     database_url = os.getenv('DATABASE_URL')
     if database_url:
         return psycopg2.connect(database_url)
     return psycopg2.connect(
         host="localhost",
         database="boardgames",
-        user="postgres",
+        user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("PASSWORD")
     )
+
+
+def get_db_connection():
+    """The connection every route uses.
+
+    Stamps the caller's id onto the session so the row-level security policies
+    can filter, and so INSERTs pick up the right owner from the column default.
+    Every route opens and closes its own connection, so a session-level SET is
+    scoped to this request — SET LOCAL would be undone by the first commit.
+    """
+    conn = raw_db_connection()
+    user = getattr(g, 'user', None) if has_request_context() else None
+    if user:
+        cur = conn.cursor()
+        cur.execute("SELECT set_config('app.user_id', %s, false)", (str(user['id']),))
+        cur.close()
+        conn.commit()
+    return conn
+
+
+def db_bypasses_rls():
+    """True when the app is connected as a superuser, which ignores RLS.
+
+    The isolation is only real once .env points at the bgl_app role, so this
+    lets the risky endpoints refuse rather than quietly serving everyone's data.
+    """
+    conn = raw_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
+        row = cur.fetchone()
+        cur.close()
+        return bool(row and row[0])
+    except psycopg2.Error:
+        return True          # can't tell, so assume the worst
+    finally:
+        conn.close()
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -1546,6 +1584,12 @@ def search_last_played():
         LIMIT 1
     """, (f"%{game_title}%",))
     last_played = cur.fetchone()
+    if not last_played:
+        # Nothing matched — every lookup below indexes into this row, so stop
+        # here rather than crashing. Common now that a new account starts empty.
+        cur.close()
+        conn.close()
+        return jsonify({'Error': 'No record found for the specified game.'})
 
     # Fetch notes
     cur.execute("SELECT notes FROM games WHERE id = %s", (f"{last_played[1]}",))
@@ -2366,6 +2410,14 @@ DB_QUERY_WRITEUP_PRICE = (1.00, 5.00)
 DB_QUERY_MAX_ROWS = 200               # rows handed back to the model and the page
 DB_QUERY_MAX_CELL = 300               # characters per cell, so a stray blob can't flood
 
+# Account tables are never described to the model. The bgl_ai role can't read
+# them either, so this is about not wasting tokens describing a dead end.
+DB_QUERY_HIDDEN_TABLES = {'users', 'login_attempts'}
+
+# Single-user campaign trackers: no owner column, so they stay the owner's and
+# are neither described nor readable for anyone else.
+DB_QUERY_OWNER_ONLY_TABLES = {'imperium', 'sleeping_gods', 'sleeping_gods_totems'}
+
 # Columns holding base64 PDFs or scraped text — enormous, and useless as answers.
 DB_QUERY_HIDDEN_COLUMNS = {
     ('rulebooks', 'pdf_data'),
@@ -2396,7 +2448,7 @@ Notes on this data:
 """
 
 
-def db_query_schema(cur):
+def db_query_schema(cur, is_owner=False):
     """Schema description handed to the model, built from the live database."""
     cur.execute("""
         SELECT table_name, column_name, data_type
@@ -2406,6 +2458,10 @@ def db_query_schema(cur):
     """)
     tables = {}
     for table, column, dtype in cur.fetchall():
+        if table in DB_QUERY_HIDDEN_TABLES:
+            continue
+        if table in DB_QUERY_OWNER_ONLY_TABLES and not is_owner:
+            continue
         note = ' -- HUGE, never select' if (table, column) in DB_QUERY_HIDDEN_COLUMNS else ''
         tables.setdefault(table, []).append(f'  {column} {dtype}{note}')
     return '\n\n'.join(f'{t}:\n' + '\n'.join(cols) for t, cols in tables.items())
@@ -2426,7 +2482,7 @@ def db_query_check(sql):
     return None
 
 
-def db_query_run(sql):
+def db_query_run(sql, is_owner=False):
     """Run the query in a read-only transaction. Returns (columns, rows, truncated)."""
     conn = get_db_connection()
     try:
@@ -2434,6 +2490,9 @@ def db_query_run(sql):
         conn.set_session(readonly=True, autocommit=False)
         cur = conn.cursor()
         cur.execute("SET LOCAL statement_timeout = '15s'")
+        # Hand the model's SQL to a role that can only read game rows: no users
+        # table, no rulebooks, and row-level security still scoped to the caller.
+        cur.execute("SET LOCAL ROLE " + ('bgl_ai_owner' if is_owner else 'bgl_ai'))
         cur.execute(sql)
         columns = [d[0] for d in cur.description] if cur.description else []
         raw = cur.fetchmany(DB_QUERY_MAX_ROWS + 1)
@@ -2474,9 +2533,18 @@ def api_ask_database():
     if not api_key:
         return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
 
+    # This endpoint runs SQL the model writes, so it is only safe while the
+    # database is enforcing row-level security. A superuser connection ignores
+    # policies, which would let a generated query read every user's rows.
+    if db_bypasses_rls():
+        return jsonify({'success': False, 'message':
+                        'Disabled: the app is connected as a superuser, which bypasses '
+                        'row-level security. Point DB_USER at bgl_app and restart.'}), 503
+
     conn = get_db_connection()
     cur = conn.cursor()
-    schema = db_query_schema(cur)
+    is_owner = bool(current_user() and current_user().get('is_owner'))
+    schema = db_query_schema(cur, is_owner=is_owner)
     cur.close()
     conn.close()
 
@@ -2526,7 +2594,7 @@ def api_ask_database():
 
     # 2. Run it read-only
     try:
-        columns, rows, truncated = db_query_run(sql.rstrip(';'))
+        columns, rows, truncated = db_query_run(sql.rstrip(';'), is_owner=is_owner)
     except psycopg2.Error as e:
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
         return jsonify({'success': False, 'message': f'Query failed: {str(e).strip()}',
