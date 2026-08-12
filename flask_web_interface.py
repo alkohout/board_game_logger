@@ -102,30 +102,6 @@ def load_user(user_id):
             'status': row[3], 'is_owner': row[4]}
 
 
-def owner_user():
-    """The account that owns the pre-existing data. Backs the legacy shared password."""
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT id FROM users WHERE is_owner AND status = 'active'")
-        row = cur.fetchone()
-        cur.close()
-    finally:
-        conn.close()
-    return load_user(row[0]) if row else None
-
-
-def legacy_password_ok():
-    """The old shared password, still accepted as the owner.
-
-    Only reason it survives: GitHub Pages can serve a cached copy of the old
-    login page for a while after a deploy, and that page posts a bare
-    password. Remove once the account login has been live for a release."""
-    auth = request.headers.get('Authorization', '')
-    configured = os.getenv('APP_PASSWORD', '')
-    return bool(configured) and auth.startswith('Bearer ') and auth[7:] == configured
-
-
 def request_user():
     """Resolve the caller from their bearer token, or None."""
     auth = request.headers.get('Authorization', '')
@@ -139,8 +115,6 @@ def request_user():
             user = load_user(data['uid'])
             if user:
                 return user
-        if legacy_password_ok():
-            return owner_user()
     return None
 
 
@@ -911,14 +885,6 @@ def api_login():
     data = request.get_json() or {}
     email = (data.get('email') or '').strip().lower()
     password = data.get('password') or ''
-
-    # Legacy: the shared password with no email, from a frontend not yet updated.
-    if not email and password and password == os.getenv('APP_PASSWORD'):
-        owner = owner_user()
-        if owner:
-            return jsonify({'success': True, 'token': issue_token(owner['id']),
-                            'user': user_public(owner)})
-        return jsonify({'success': True, 'token': os.getenv('APP_PASSWORD')})
 
     if not email or not password:
         return jsonify({'success': False, 'message': 'Email and password required.'}), 400

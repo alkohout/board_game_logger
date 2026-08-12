@@ -7,12 +7,13 @@ database belongs to them. Run this once after 001_accounts.sql:
     cd /opt/board_game_logger
     ./venv/bin/python migrations/seed_owner.py you@example.com
 
-The initial password is APP_PASSWORD from .env, so nothing you already know
-changes. Change it from the app afterwards.
+You'll be prompted for the initial password (or set APP_PASSWORD and it will
+use that). Change it from the app's Account box afterwards.
 
 Re-running is safe: it updates the email of the existing owner rather than
 creating a second one.
 """
+import getpass
 import os
 import sys
 
@@ -29,7 +30,9 @@ def main():
 
     password = os.getenv('APP_PASSWORD')
     if not password:
-        sys.exit('APP_PASSWORD is not set — cannot seed the owner password.')
+        password = getpass.getpass(f'Initial password for {email}: ')
+        if len(password) < 8:
+            sys.exit('Password must be at least 8 characters.')
 
     conn = app.get_db_connection()
     cur = conn.cursor()
@@ -49,7 +52,7 @@ def main():
         owner_id = cur.fetchone()[0]
         conn.commit()
         print(f'Owner account created: id {owner_id}, {email}')
-        print('Password is the current APP_PASSWORD.')
+        print('Use the password you just set to log in, then change it in the app.')
 
     cur.close()
     conn.close()
