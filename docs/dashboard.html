@@ -139,6 +139,7 @@
         <button onclick="window.location.href='./sleeping_gods.html'">Sleeping Gods Log</button>
         <button onclick="window.location.href='./rules_assistant.html'">Rules Assistant (AI)</button>
         <button onclick="window.location.href='./database_query.html'">Database Query (AI)</button>
+        <button id="users-nav" style="display:none;" onclick="window.location.href='./users.html'">Users</button>
     </nav>
 </div>
 
@@ -250,6 +251,14 @@ function renderRecords(rec, gp) {
         cell.title = (r.count && current >= r.count) ? 'Record!' : '';
     });
 }
+
+// Who's logged in — the Users link is for the owner only. The server enforces
+// this too; hiding the button just keeps it out of everyone else's way.
+async function loadMe() {
+    const data = await apiGet('/api/me');
+    if (data?.user?.is_owner) document.getElementById('users-nav').style.display = '';
+}
+loadMe();
 
 // Load dashboard stats
 async function loadStats() {

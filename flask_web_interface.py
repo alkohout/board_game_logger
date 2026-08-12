@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, g
 from flask_cors import CORS
 import psycopg2
 import os
@@ -9,6 +9,8 @@ import base64
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+from werkzeug.security import generate_password_hash, check_password_hash
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 load_dotenv()
 
@@ -54,9 +56,89 @@ CORS(app,
      methods=["GET", "POST", "OPTIONS"])
 
 
-def api_auth_ok():
+# ── Accounts and sessions ─────────────────────────────────────────────────────
+# A session token is a signed, expiring statement of "this is user N", not a
+# password echoed back. Signing means the server keeps no session table and a
+# token cannot be forged without SECRET_KEY.
+
+TOKEN_MAX_AGE = 60 * 60 * 24 * 30      # 30 days before a login expires
+LOGIN_MAX_FAILURES = 8                  # per email per window
+LOGIN_WINDOW_MINUTES = 15
+MIN_PASSWORD_LENGTH = 8
+
+# Endpoints reachable without a session.
+PUBLIC_API_PATHS = {'/api/login', '/api/signup'}
+
+
+def token_serializer():
+    return URLSafeTimedSerializer(app.secret_key or '', salt='bgl-session')
+
+
+def issue_token(user_id):
+    return token_serializer().dumps({'uid': user_id})
+
+
+def load_user(user_id):
+    """Fetch a user by id. Returns None for unknown, pending or disabled accounts."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, email, display_name, status, is_owner
+            FROM users WHERE id = %s
+        """, (user_id,))
+        row = cur.fetchone()
+        cur.close()
+    finally:
+        conn.close()
+    if not row or row[3] != 'active':
+        return None
+    return {'id': row[0], 'email': row[1], 'display_name': row[2],
+            'status': row[3], 'is_owner': row[4]}
+
+
+def owner_user():
+    """The account that owns the pre-existing data. Backs the legacy shared password."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE is_owner AND status = 'active'")
+        row = cur.fetchone()
+        cur.close()
+    finally:
+        conn.close()
+    return load_user(row[0]) if row else None
+
+
+def legacy_password_ok():
+    """The old shared password, still accepted as the owner until the frontend
+    everywhere is on accounts. Remove once the legacy pages are gone."""
     auth = request.headers.get('Authorization', '')
-    return auth.startswith('Bearer ') and auth[7:] == os.getenv('APP_PASSWORD', '')
+    configured = os.getenv('APP_PASSWORD', '')
+    return bool(configured) and auth.startswith('Bearer ') and auth[7:] == configured
+
+
+def request_user():
+    """Resolve the caller from their bearer token, or None."""
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Bearer '):
+        raw = auth[7:]
+        try:
+            data = token_serializer().loads(raw, max_age=TOKEN_MAX_AGE)
+        except (BadSignature, SignatureExpired):
+            data = None
+        if data and data.get('uid'):
+            user = load_user(data['uid'])
+            if user:
+                return user
+        if legacy_password_ok():
+            return owner_user()
+    return None
+
+
+def api_auth_ok():
+    """Kept for the server-rendered pages until they are retired."""
+    return request_user() is not None
 
 
 @app.before_request
@@ -66,16 +148,35 @@ def require_login():
     if request.endpoint == 'static':
         return
     if request.path.startswith('/api/'):
-        if request.path == '/api/login':
+        if request.path in PUBLIC_API_PATHS:
             return
-        if not api_auth_ok():
+        user = request_user()
+        if not user:
             return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+        g.user = user
         return
     if request.endpoint in ('login', 'logout'):
         return
-    if session.get('logged_in') or api_auth_ok():
+    if session.get('logged_in'):
+        g.user = owner_user()
+        return
+    user = request_user()
+    if user:
+        g.user = user
         return
     return redirect(url_for('login'))
+
+
+def current_user():
+    return getattr(g, 'user', None)
+
+
+def owner_only():
+    """Guard for admin endpoints. Returns a response to send, or None to proceed."""
+    user = current_user()
+    if not user or not user.get('is_owner'):
+        return jsonify({'success': False, 'message': 'Owner only'}), 403
+    return None
 
 # Per-process state: gunicorn runs 2 workers, so each holds its own copy and
 # a choice added through one worker is invisible to the other. The GitHub
@@ -1833,12 +1934,169 @@ def ask_rules():
 
 # ── Static-frontend JSON API ──────────────────────────────────────────────────
 
+def user_public(user):
+    return {'id': user['id'], 'email': user['email'],
+            'display_name': user['display_name'], 'is_owner': user['is_owner']}
+
+
+def recent_login_failures(cur, email):
+    cur.execute("""
+        SELECT COUNT(*) FROM login_attempts
+        WHERE lower(email) = lower(%s)
+          AND attempted_at > now() - make_interval(mins => %s)
+    """, (email, LOGIN_WINDOW_MINUTES))
+    return cur.fetchone()[0]
+
+
+@app.route('/api/signup', methods=['POST'])
+def api_signup():
+    data = request.get_json() or {}
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+    display_name = (data.get('display_name') or '').strip() or None
+
+    if '@' not in email or len(email) < 5:
+        return jsonify({'success': False, 'message': 'A valid email is required.'}), 400
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return jsonify({'success': False,
+                        'message': f'Password must be at least {MIN_PASSWORD_LENGTH} characters.'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO users (email, password_hash, display_name, status)
+            VALUES (%s, %s, %s, 'pending')
+        """, (email, generate_password_hash(password), display_name))
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        # Don't confirm which emails exist; the message is the same either way.
+        return jsonify({'success': True, 'message':
+                        'Thanks — your request is with the owner for approval.'})
+    finally:
+        cur.close()
+        conn.close()
+
+    return jsonify({'success': True, 'message':
+                    'Thanks — your request is with the owner for approval.'})
+
+
 @app.route('/api/login', methods=['POST'])
 def api_login():
     data = request.get_json() or {}
-    if data.get('password') == os.getenv('APP_PASSWORD'):
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+
+    # Legacy: the shared password with no email, from a frontend not yet updated.
+    if not email and password and password == os.getenv('APP_PASSWORD'):
+        owner = owner_user()
+        if owner:
+            return jsonify({'success': True, 'token': issue_token(owner['id']),
+                            'user': user_public(owner)})
         return jsonify({'success': True, 'token': os.getenv('APP_PASSWORD')})
-    return jsonify({'success': False, 'message': 'Wrong password'}), 401
+
+    if not email or not password:
+        return jsonify({'success': False, 'message': 'Email and password required.'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        if recent_login_failures(cur, email) >= LOGIN_MAX_FAILURES:
+            return jsonify({'success': False, 'message':
+                            'Too many attempts. Try again in a few minutes.'}), 429
+
+        cur.execute("""
+            SELECT id, email, display_name, status, is_owner, password_hash
+            FROM users WHERE lower(email) = lower(%s)
+        """, (email,))
+        row = cur.fetchone()
+
+        if not row or not check_password_hash(row[5], password):
+            cur.execute("INSERT INTO login_attempts (email, ip) VALUES (%s, %s)",
+                        (email, request.headers.get('X-Forwarded-For', request.remote_addr)))
+            conn.commit()
+            return jsonify({'success': False, 'message': 'Wrong email or password.'}), 401
+
+        if row[3] == 'pending':
+            return jsonify({'success': False, 'message':
+                            'Your account is waiting for the owner to approve it.'}), 403
+        if row[3] != 'active':
+            return jsonify({'success': False, 'message': 'This account is disabled.'}), 403
+
+        # A clean login clears the throttle for that email.
+        cur.execute("DELETE FROM login_attempts WHERE lower(email) = lower(%s)", (email,))
+        conn.commit()
+        user = {'id': row[0], 'email': row[1], 'display_name': row[2],
+                'status': row[3], 'is_owner': row[4]}
+    finally:
+        cur.close()
+        conn.close()
+
+    return jsonify({'success': True, 'token': issue_token(user['id']),
+                    'user': user_public(user)})
+
+
+@app.route('/api/me')
+def api_me():
+    return jsonify({'success': True, 'user': user_public(current_user())})
+
+
+@app.route('/api/users')
+def api_users():
+    denied = owner_only()
+    if denied:
+        return denied
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, email, display_name, status, is_owner, created_at, approved_at
+        FROM users ORDER BY (status = 'pending') DESC, created_at DESC
+    """)
+    users = [{'id': r[0], 'email': r[1], 'display_name': r[2], 'status': r[3],
+              'is_owner': r[4], 'created_at': r[5].isoformat() if r[5] else None,
+              'approved_at': r[6].isoformat() if r[6] else None}
+             for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'users': users})
+
+
+@app.route('/api/users/<int:user_id>/status', methods=['POST'])
+def api_set_user_status(user_id):
+    denied = owner_only()
+    if denied:
+        return denied
+    status = (request.get_json() or {}).get('status')
+    if status not in ('active', 'disabled', 'pending'):
+        return jsonify({'success': False, 'message': 'Invalid status.'}), 400
+    if user_id == current_user()['id']:
+        return jsonify({'success': False, 'message': "You can't change your own status."}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT is_owner FROM users WHERE id = %s", (user_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        return jsonify({'success': False, 'message': 'No such user.'}), 404
+    if row[0]:
+        cur.close()
+        conn.close()
+        return jsonify({'success': False, 'message': "The owner account can't be changed."}), 400
+
+    cur.execute("""
+        UPDATE users
+        SET status = %s,
+            approved_at = CASE WHEN %s = 'active' AND approved_at IS NULL
+                               THEN now() ELSE approved_at END
+        WHERE id = %s
+    """, (status, status, user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True})
 
 
 @app.route('/api/dashboard')

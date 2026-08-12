@@ -7,56 +7,117 @@
     <link rel="stylesheet" href="./styles.css">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        .switch { margin-top:14px; font-size:0.85em; color:#bbb; }
+        .switch a { color:#90CAF9; cursor:pointer; text-decoration:underline; }
+    </style>
 </head>
 <body>
-    <div class="form-container" style="max-width:360px; margin-top:80px;">
+    <div class="form-container" style="max-width:360px; margin-top:60px;">
         <h1>Board Game Logger</h1>
-        <label for="password">Password:</label>
-        <input type="password" id="password" placeholder="Enter password" autocomplete="off">
-        <button id="login-btn">Login</button>
+
+        <div id="login-form">
+            <label for="email">Email:</label>
+            <input type="email" id="email" autocomplete="username" placeholder="you@example.com">
+            <label for="password">Password:</label>
+            <input type="password" id="password" autocomplete="current-password" placeholder="Password">
+            <button id="login-btn">Login</button>
+            <p class="switch">No account? <a id="show-signup">Request one</a></p>
+        </div>
+
+        <div id="signup-form" style="display:none;">
+            <label for="su-name">Name:</label>
+            <input type="text" id="su-name" autocomplete="name" placeholder="What should we call you?">
+            <label for="su-email">Email:</label>
+            <input type="email" id="su-email" autocomplete="username" placeholder="you@example.com">
+            <label for="su-password">Password:</label>
+            <input type="password" id="su-password" autocomplete="new-password" placeholder="At least 8 characters">
+            <button id="signup-btn">Request an account</button>
+            <p class="switch">New accounts are approved by hand, so this isn't instant.</p>
+            <p class="switch">Already have one? <a id="show-login">Log in</a></p>
+        </div>
+
         <p id="error-msg" class="status-err" style="display:none;"></p>
+        <p id="ok-msg" class="status-ok" style="display:none;"></p>
     </div>
 
     <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
 
     <script src="./config.js"></script>
     <script>
-        // If already logged in, skip login
-        if (localStorage.getItem('bg_token')) {
-            window.location.href = './dashboard.html';
+        if (localStorage.getItem('bg_token')) window.location.href = './dashboard.html';
+
+        const err = document.getElementById('error-msg');
+        const okMsg = document.getElementById('ok-msg');
+        const show = (el, text) => { el.textContent = text; el.style.display = ''; };
+        const clearMsgs = () => { err.style.display = 'none'; okMsg.style.display = 'none'; };
+
+        function swap(toSignup) {
+            clearMsgs();
+            document.getElementById('login-form').style.display = toSignup ? 'none' : '';
+            document.getElementById('signup-form').style.display = toSignup ? '' : 'none';
+        }
+        document.getElementById('show-signup').addEventListener('click', () => swap(true));
+        document.getElementById('show-login').addEventListener('click', () => swap(false));
+
+        async function send(path, body) {
+            const resp = await fetch(API_BASE + path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            return resp.json();
         }
 
         async function doLogin() {
-            const pw = document.getElementById('password').value;
             const btn = document.getElementById('login-btn');
-            const err = document.getElementById('error-msg');
-            btn.disabled = true;
-            btn.textContent = 'Logging in...';
-            err.style.display = 'none';
+            clearMsgs();
+            btn.disabled = true; btn.textContent = 'Logging in...';
             try {
-                const resp = await fetch(API_BASE + '/api/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: pw })
+                const data = await send('/api/login', {
+                    email: document.getElementById('email').value.trim(),
+                    password: document.getElementById('password').value
                 });
-                const data = await resp.json();
                 if (data.success) {
                     localStorage.setItem('bg_token', data.token);
                     window.location.href = './dashboard.html';
+                    return;
+                }
+                show(err, data.message || 'Wrong email or password');
+            } catch (e) {
+                show(err, 'Cannot reach server — is it online?');
+            }
+            btn.disabled = false; btn.textContent = 'Login';
+        }
+
+        async function doSignup() {
+            const btn = document.getElementById('signup-btn');
+            clearMsgs();
+            btn.disabled = true; btn.textContent = 'Sending...';
+            try {
+                const data = await send('/api/signup', {
+                    display_name: document.getElementById('su-name').value.trim(),
+                    email: document.getElementById('su-email').value.trim(),
+                    password: document.getElementById('su-password').value
+                });
+                if (data.success) {
+                    swap(false);
+                    show(okMsg, data.message);
                 } else {
-                    err.textContent = data.message || 'Wrong password';
-                    err.style.display = '';
+                    show(err, data.message || 'Could not create the request.');
                 }
             } catch (e) {
-                err.textContent = 'Cannot reach server — is it online?';
-                err.style.display = '';
+                show(err, 'Cannot reach server — is it online?');
             }
-            btn.disabled = false;
-            btn.textContent = 'Login';
+            btn.disabled = false; btn.textContent = 'Request an account';
         }
 
         document.getElementById('login-btn').addEventListener('click', doLogin);
-        document.getElementById('password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+        document.getElementById('signup-btn').addEventListener('click', doSignup);
+        ['email', 'password'].forEach(id =>
+            document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); }));
+        ['su-name', 'su-email', 'su-password'].forEach(id =>
+            document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doSignup(); }));
     </script>
 </body>
 </html>

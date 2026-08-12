@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Users</title>
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        .user { border-bottom:1px solid rgba(255,255,255,0.15); padding:10px 0; }
+        .user:last-child { border-bottom:none; }
+        .user-email { font-weight:bold; }
+        .user-meta { font-size:0.8em; color:#aaa; margin:2px 0 6px; }
+        .badge { font-size:0.72em; padding:2px 8px; border-radius:10px; margin-left:6px; vertical-align:middle; }
+        .b-pending  { background:#7a5c00; }
+        .b-active   { background:#2e7d32; }
+        .b-disabled { background:#7f3333; }
+        .b-owner    { background:#1565C0; }
+        .user button { font-size:0.8em; padding:6px 12px; }
+    </style>
+</head>
+<body>
+    <div class="form-container" style="max-width:560px;">
+        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+        <h1>Users</h1>
+        <p style="color:#ccc; font-size:0.9em;">
+            New accounts arrive as <em>pending</em> and can't log in until you approve them.
+        </p>
+        <div id="list"><p style="color:#aaa;">Loading...</p></div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        function when(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+
+        async function load() {
+            const data = await apiGet('/api/users');
+            const list = document.getElementById('list');
+            if (!data) return;
+            if (!data.success) {
+                list.innerHTML = `<p class="status-err">${esc(data.message || 'Not allowed.')}</p>`;
+                return;
+            }
+            list.innerHTML = data.users.map(u => {
+                const badge = u.is_owner
+                    ? '<span class="badge b-owner">owner</span>'
+                    : `<span class="badge b-${u.status}">${u.status}</span>`;
+                let actions = '';
+                if (!u.is_owner) {
+                    if (u.status !== 'active') {
+                        actions += `<button data-id="${u.id}" data-status="active">Approve</button>`;
+                    }
+                    if (u.status !== 'disabled') {
+                        actions += `<button class="btn-red" data-id="${u.id}" data-status="disabled">Disable</button>`;
+                    }
+                }
+                return `<div class="user">
+                    <div><span class="user-email">${esc(u.display_name || u.email)}</span>${badge}</div>
+                    <div class="user-meta">${esc(u.email)} — requested ${when(u.created_at)}${
+                        u.approved_at ? `, approved ${when(u.approved_at)}` : ''}</div>
+                    ${actions}
+                </div>`;
+            }).join('');
+
+            list.querySelectorAll('button[data-id]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const status = btn.dataset.status;
+                    if (status === 'disabled' && !confirm('Disable this account? They will be logged out.')) return;
+                    btn.disabled = true;
+                    const res = await apiPost(`/api/users/${btn.dataset.id}/status`, { status });
+                    if (!res?.success) alert(res?.message || 'Failed.');
+                    load();
+                });
+            });
+        }
+        load();
+    </script>
+</body>
+</html>
