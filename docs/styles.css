@@ -13,6 +13,10 @@ h1, h2, h3, label {
     text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
 }
 
+/* Each field starts its own line, so a label can never ride up beside the
+   input above it if some future input type misses the width rule below. */
+label { display: block; }
+
 .form-container {
     background: rgba(0,0,0,0.7);
     padding: 20px;
@@ -23,7 +27,7 @@ h1, h2, h3, label {
 }
 
 input[type="text"], input[type="date"], input[type="password"],
-input[type="number"], input[type="file"], textarea, select {
+input[type="email"], input[type="number"], input[type="file"], textarea, select {
     width: 100%;
     box-sizing: border-box;
     padding: 8px;
