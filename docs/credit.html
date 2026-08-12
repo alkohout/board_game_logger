@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Credit</title>
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        .big { font-size:2.2em; font-weight:bold; color:#90EE90; }
+        .big.low { color:#FFD54F; }
+        .big.none { color:#FF6B6B; }
+        .split { color:#aaa; font-size:0.85em; margin-top:4px; }
+        .rows { margin-top:10px; font-size:0.85em; }
+        .rows div { display:flex; justify-content:space-between; padding:4px 0;
+                    border-bottom:1px solid rgba(255,255,255,0.1); }
+        .rows span.meta { color:#888; }
+        .pill { font-size:0.7em; padding:1px 7px; border-radius:9px; margin-left:6px; }
+        .p-free   { background:#2e5c2e; }
+        .p-credit { background:#1565C0; }
+        .p-owner  { background:#6a4c93; }
+        .p-paid   { background:#2e7d32; }
+        .p-pending{ background:#7a5c00; }
+        .p-cancelled { background:#7f3333; }
+    </style>
+</head>
+<body>
+    <div class="form-container" style="max-width:520px;">
+        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
+        <h1>AI Credit</h1>
+        <div id="summary"><p style="color:#aaa;">Loading...</p></div>
+        <div id="topup" style="display:none; margin-top:18px;">
+            <h3>Top up</h3>
+            <div id="topup-buttons"></div>
+            <p id="topup-msg" class="status-err" style="display:none;"></p>
+        </div>
+        <div id="history"></div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script>
+        requireAuth();
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const money = n => 'NZ$' + Number(n).toFixed(2);
+        const when = iso => new Date(iso).toLocaleDateString(undefined,
+            { day: 'numeric', month: 'short' });
+
+        const params = new URLSearchParams(location.search);
+
+        async function load() {
+            const d = await apiGet('/api/credit');
+            if (!d?.success) return;
+            const b = d.balance;
+
+            if (d.uncapped) {
+                document.getElementById('summary').innerHTML = `
+                    <p class="big">Uncapped</p>
+                    <p class="split">Your own account is never blocked. Spent this month:
+                        ${money(b.month_spend)}.</p>`;
+            } else {
+                const level = b.available <= 0 ? 'none' : b.available < 0.1 ? 'low' : '';
+                document.getElementById('summary').innerHTML = `
+                    <p class="big ${level}">${money(b.available)}</p>
+                    <p class="split">
+                        ${money(b.free_remaining)} of this month's free ${money(b.free_monthly)}
+                        &nbsp;·&nbsp; ${money(b.credit_remaining)} purchased
+                    </p>
+                    <p class="split">Spent this month: ${money(b.month_spend)}.
+                        A question costs about NZ$0.02.</p>`;
+                document.getElementById('topup').style.display = '';
+            }
+
+            const tb = document.getElementById('topup-buttons');
+            if (!d.stripe_enabled) {
+                tb.innerHTML = '<p class="split">Top-ups aren\'t switched on yet.</p>';
+            } else {
+                tb.innerHTML = d.topup_options
+                    .map(a => `<button data-amount="${a}">Add NZ$${a}</button>`).join('');
+                tb.querySelectorAll('button').forEach(btn => btn.addEventListener('click', async () => {
+                    btn.disabled = true;
+                    const res = await apiPost('/api/credit/checkout',
+                                              { amount_nzd: Number(btn.dataset.amount) });
+                    if (res?.url) { window.location.href = res.url; return; }
+                    const msg = document.getElementById('topup-msg');
+                    msg.textContent = res?.message || 'Could not start checkout.';
+                    msg.style.display = '';
+                    btn.disabled = false;
+                }));
+            }
+
+            const usage = d.recent_usage.map(u => `<div>
+                <span>${u.kind === 'rules' ? 'Rules Assistant' : 'Database Query'}
+                    <span class="pill p-${u.funded_by}">${u.funded_by}</span></span>
+                <span class="meta">${money(u.cost_nzd)} · ${when(u.at)}</span></div>`).join('');
+            const buys = d.purchases.map(p => `<div>
+                <span>Top-up ${money(p.amount_nzd)}
+                    <span class="pill p-${p.status}">${p.status}</span></span>
+                <span class="meta">${when(p.at)}</span></div>`).join('');
+            document.getElementById('history').innerHTML =
+                (buys ? `<h3>Top-ups</h3><div class="rows">${buys}</div>` : '') +
+                (usage ? `<h3>Recent questions</h3><div class="rows">${usage}</div>`
+                       : '<p class="split" style="margin-top:16px;">No AI questions yet.</p>');
+        }
+
+        if (params.get('paid')) {
+            // Stripe redirects here on success, but the webhook is what actually
+            // credits the balance and may land a moment later.
+            const s = document.getElementById('summary');
+            s.innerHTML = '<p class="status-ok">Payment received — adding your credit...</p>';
+            setTimeout(load, 1500);
+            setTimeout(load, 5000);
+        } else {
+            load();
+        }
+        if (params.get('cancelled')) {
+            const m = document.getElementById('topup-msg');
+            m.textContent = 'Checkout cancelled — nothing was charged.';
+            m.style.display = '';
+        }
+    </script>
+</body>
+</html>

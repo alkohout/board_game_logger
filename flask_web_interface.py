@@ -5,6 +5,10 @@ import os
 import random
 import re
 import anthropic
+try:
+    import stripe                       # only needed for credit top-ups
+except ImportError:                     # keeps the app up if it isn't installed yet
+    stripe = None
 import base64
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
@@ -153,7 +157,7 @@ def require_login():
             return jsonify({'success': False, 'message': 'Unauthorized'}), 401
         g.user = user
         return
-    if request.endpoint == 'api_root':
+    if request.endpoint in ('api_root', 'stripe_webhook'):
         return
     # The handful of surviving non-/api/ endpoints are called by the site with
     # a bearer token, same as the rest. There is no browser session any more,
@@ -724,6 +728,10 @@ def ask_rules():
         if not game_title or not question:
             return jsonify({'success': False, 'message': 'Game and question required'}), 400
 
+        blocked = ai_spend_blocked()
+        if blocked:
+            return blocked
+
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
@@ -795,6 +803,7 @@ def ask_rules():
         cost_usd = input_cost + output_cost
         nzd_rate = float(os.getenv('NZD_RATE', '1.68'))
         cost_nzd = cost_usd * nzd_rate
+        record_ai_usage('rules', cost_nzd, cost_usd)
 
         return jsonify({
             'success': True,
@@ -1223,6 +1232,233 @@ def api_rules_assistant_data():
     return jsonify({'game_titles': game_titles, 'has_rulebook': has_rulebook, 'rulebook_names': rulebook_names, 'has_bgg': has_bgg})
 
 
+# ── AI credit ─────────────────────────────────────────────────────────────────
+# Every AI question is metered against a balance in two parts: a free grant
+# that resets each calendar month, and credit bought through Stripe that
+# doesn't. Each usage row records which pot paid for it, so the two never have
+# to be untangled after the fact. The owner is never blocked but is still
+# metered, so the running cost of other people's questions stays visible.
+
+FREE_MONTHLY_NZD = 0.50        # roughly 25-35 questions
+MIN_BALANCE_NZD = 0.05         # refuse below this: one question can cost ~0.03
+TOPUP_OPTIONS_NZD = (5, 10, 20)
+
+
+def ai_balance(user_id):
+    """What this account has left to spend, split by where it came from."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+          COALESCE(SUM(cost_nzd) FILTER (
+              WHERE funded_by = 'free'
+                AND created_at >= date_trunc('month', now())), 0),
+          COALESCE(SUM(cost_nzd) FILTER (WHERE funded_by = 'credit'), 0),
+          COALESCE(SUM(cost_nzd) FILTER (
+              WHERE created_at >= date_trunc('month', now())), 0)
+        FROM ai_usage WHERE user_id = %s
+    """, (user_id,))
+    free_used, credit_used, month_spend = cur.fetchone()
+    cur.execute("""
+        SELECT COALESCE(SUM(amount_nzd), 0) FROM credit_purchases
+        WHERE user_id = %s AND status = 'paid'
+    """, (user_id,))
+    purchased = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+
+    free_remaining = max(0.0, FREE_MONTHLY_NZD - float(free_used))
+    credit_remaining = float(purchased) - float(credit_used)
+    return {
+        'free_remaining': round(free_remaining, 4),
+        'credit_remaining': round(credit_remaining, 4),
+        'available': round(free_remaining + credit_remaining, 4),
+        'month_spend': round(float(month_spend), 4),
+        'purchased_total': round(float(purchased), 2),
+        'free_monthly': FREE_MONTHLY_NZD,
+    }
+
+
+def ai_spend_blocked():
+    """Response to return if this user can't afford a question, else None."""
+    user = current_user()
+    if user.get('is_owner'):
+        return None
+    balance = ai_balance(user['id'])
+    if balance['available'] < MIN_BALANCE_NZD:
+        return jsonify({
+            'success': False,
+            'out_of_credit': True,
+            'balance': balance,
+            'message': ("You're out of AI credit. Your free NZ$%.2f resets at the start "
+                        "of the month, or you can top up." % FREE_MONTHLY_NZD),
+        }), 402
+    return None
+
+
+def record_ai_usage(kind, cost_nzd, cost_usd):
+    """Bill a question. Free grant first, then purchased credit.
+
+    Charged whole to one pot rather than split across both — a question costs
+    a couple of cents, so the rounding is worth the simpler ledger.
+    """
+    user = current_user()
+    if not user:
+        return
+    if user.get('is_owner'):
+        funded_by = 'owner'
+    else:
+        funded_by = 'free' if ai_balance(user['id'])['free_remaining'] >= cost_nzd else 'credit'
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO ai_usage (user_id, kind, cost_nzd, cost_usd, funded_by)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (user['id'], kind, round(cost_nzd, 5), round(cost_usd, 5), funded_by))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+@app.route('/api/credit')
+def api_credit():
+    user = current_user()
+    balance = ai_balance(user['id'])
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT kind, cost_nzd, funded_by, created_at FROM ai_usage
+        WHERE user_id = %s ORDER BY created_at DESC LIMIT 20
+    """, (user['id'],))
+    recent = [{'kind': r[0], 'cost_nzd': float(r[1]), 'funded_by': r[2],
+               'at': r[3].isoformat()} for r in cur.fetchall()]
+    cur.execute("""
+        SELECT amount_nzd, status, created_at, paid_at FROM credit_purchases
+        WHERE user_id = %s ORDER BY created_at DESC LIMIT 20
+    """, (user['id'],))
+    purchases = [{'amount_nzd': float(r[0]), 'status': r[1],
+                  'at': r[2].isoformat(), 'paid_at': r[3].isoformat() if r[3] else None}
+                 for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'balance': balance, 'uncapped': bool(user['is_owner']),
+                    'recent_usage': recent, 'purchases': purchases,
+                    'topup_options': list(TOPUP_OPTIONS_NZD),
+                    'stripe_enabled': bool(stripe and os.getenv('STRIPE_SECRET_KEY'))})
+
+
+@app.route('/api/credit/checkout', methods=['POST'])
+def api_credit_checkout():
+    """Start a Stripe Checkout session for a top-up.
+
+    Nothing is credited here. The amount is picked from a server-side list
+    rather than taken from the request, and only the signed webhook marks a
+    purchase paid — a success redirect can be forged, a signature can't.
+    """
+    if not stripe or not os.getenv('STRIPE_SECRET_KEY'):
+        return jsonify({'success': False, 'message': 'Top-ups are not configured.'}), 503
+    stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+
+    amount = (request.get_json() or {}).get('amount_nzd')
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        amount = None
+    if amount not in TOPUP_OPTIONS_NZD:
+        return jsonify({'success': False, 'message': 'Choose one of the listed amounts.'}), 400
+
+    user = current_user()
+    site = os.getenv('SITE_URL', 'https://alkohout.github.io/board_game_logger')
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO credit_purchases (user_id, amount_nzd, status)
+        VALUES (%s, %s, 'pending') RETURNING id
+    """, (user['id'], amount))
+    purchase_id = cur.fetchone()[0]
+    conn.commit()
+
+    try:
+        checkout = stripe.checkout.Session.create(
+            mode='payment',
+            line_items=[{
+                'quantity': 1,
+                'price_data': {
+                    'currency': 'nzd',
+                    'unit_amount': amount * 100,
+                    'product_data': {'name': f'Board Game Logger AI credit — NZ${amount}'},
+                },
+            }],
+            success_url=f'{site}/credit.html?paid=1',
+            cancel_url=f'{site}/credit.html?cancelled=1',
+            client_reference_id=str(purchase_id),
+            metadata={'purchase_id': str(purchase_id), 'user_id': str(user['id'])},
+        )
+    except Exception as e:                                  # stripe.StripeError and friends
+        cur.execute("UPDATE credit_purchases SET status = 'cancelled' WHERE id = %s",
+                    (purchase_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': False, 'message': f'Stripe error: {e}'}), 502
+
+    cur.execute("UPDATE credit_purchases SET stripe_session_id = %s WHERE id = %s",
+                (checkout.id, purchase_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'url': checkout.url})
+
+
+@app.route('/stripe/webhook', methods=['POST'])
+def stripe_webhook():
+    """The only thing that turns a pending purchase into credit.
+
+    Unauthenticated by necessity — Stripe calls it — so the signature is what
+    establishes trust, and a missing signing secret means we refuse rather
+    than take the payload's word for it.
+    """
+    if not stripe:
+        return jsonify({'success': False}), 503
+    secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+    if not secret:
+        app.logger.error('Stripe webhook received but STRIPE_WEBHOOK_SECRET is not set')
+        return jsonify({'success': False}), 503
+    try:
+        event = stripe.Webhook.construct_event(
+            request.data, request.headers.get('Stripe-Signature', ''), secret)
+    except Exception:
+        app.logger.warning('Rejected Stripe webhook with a bad signature')
+        return jsonify({'success': False}), 400
+
+    if event['type'] == 'checkout.session.completed':
+        session_id = event['data']['object']['id']
+        conn = raw_db_connection()          # no logged-in user on this request
+        cur = conn.cursor()
+        # SECURITY DEFINER function: credits the row without disabling RLS.
+        cur.execute("SELECT * FROM credit_mark_paid(%s)", (session_id,))
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        if row:
+            app.logger.info('Credited NZ$%s to user %s', row[2], row[1])
+        # A repeat delivery finds nothing pending and is a no-op, which is the
+        # point: Stripe retries, and a top-up must not be credited twice.
+    elif event['type'] == 'checkout.session.expired':
+        conn = raw_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE credit_purchases SET status = 'cancelled'
+            WHERE stripe_session_id = %s AND status = 'pending'
+        """, (event['data']['object']['id'],))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    return jsonify({'success': True})
+
+
 # ── Database Query (AI) ───────────────────────────────────────────────────────
 # Ask a question in English; Claude writes the SQL, we run it read-only and
 # Claude reads the rows back. The model never touches the database itself.
@@ -1243,7 +1479,7 @@ DB_QUERY_MAX_CELL = 300               # characters per cell, so a stray blob can
 
 # Account tables are never described to the model. The bgl_ai role can't read
 # them either, so this is about not wasting tokens describing a dead end.
-DB_QUERY_HIDDEN_TABLES = {'users', 'login_attempts'}
+DB_QUERY_HIDDEN_TABLES = {'users', 'login_attempts', 'ai_usage', 'credit_purchases'}
 
 # Single-user campaign trackers: no owner column, so they stay the owner's and
 # are neither described nor readable for anyone else.
@@ -1367,6 +1603,10 @@ def api_ask_database():
     # This endpoint runs SQL the model writes, so it is only safe while the
     # database is enforcing row-level security. A superuser connection ignores
     # policies, which would let a generated query read every user's rows.
+    blocked = ai_spend_blocked()
+    if blocked:
+        return blocked
+
     if db_bypasses_rls():
         return jsonify({'success': False, 'message':
                         'Disabled: the app is connected as a superuser, which bypasses '
@@ -1414,12 +1654,14 @@ def api_ask_database():
 
     if sql.upper().startswith('UNSUPPORTED'):
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        record_ai_usage('db_query', nzd, usd)
         return jsonify({'success': False, 'message': sql.split(':', 1)[-1].strip(),
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
 
     problem = db_query_check(sql)
     if problem:
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        record_ai_usage('db_query', nzd, usd)
         return jsonify({'success': False, 'message': problem, 'sql': sql,
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
 
@@ -1428,6 +1670,7 @@ def api_ask_database():
         columns, rows, truncated = db_query_run(sql.rstrip(';'), is_owner=is_owner)
     except psycopg2.Error as e:
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        record_ai_usage('db_query', nzd, usd)
         return jsonify({'success': False, 'message': f'Query failed: {str(e).strip()}',
                         'sql': sql, 'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
 
@@ -1453,12 +1696,14 @@ def api_ask_database():
     except (anthropic.APIStatusError, anthropic.APIConnectionError):
         # The data is good even if the write-up failed — return it without prose.
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
+        record_ai_usage('db_query', nzd, usd)
         return jsonify({'success': True, 'sql': sql, 'columns': columns, 'rows': rows,
                         'truncated': truncated, 'answer': '',
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
 
     usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE),
                           (answer_response, *DB_QUERY_WRITEUP_PRICE))
+    record_ai_usage('db_query', nzd, usd)
     return jsonify({
         'success': True,
         'answer': db_query_text(answer_response),

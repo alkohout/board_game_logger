@@ -116,6 +116,9 @@
                 addEntry(question, data, null);
                 history.push({ question, sql: data.sql, answer: data.answer });
                 input.value = '';
+            } else if (data.out_of_credit) {
+                addEntry(question, data,
+                    (data.message || 'Out of AI credit.') + ' Open the AI Credit page to top up.');
             } else {
                 addEntry(question, data, data.message || 'Something went wrong.');
             }
