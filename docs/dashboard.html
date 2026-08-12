@@ -135,8 +135,8 @@
     <nav>
         <button onclick="window.location.href='./games_overview.html'">Games Overview</button>
         <button onclick="window.location.href='./all_games.html'">All Games Ranked</button>
-        <button onclick="window.location.href='./imperium.html'">Imperium Stats</button>
-        <button onclick="window.location.href='./sleeping_gods.html'">Sleeping Gods Log</button>
+        <button class="owner-only" style="display:none;" onclick="window.location.href='./imperium.html'">Imperium Stats</button>
+        <button class="owner-only" style="display:none;" onclick="window.location.href='./sleeping_gods.html'">Sleeping Gods Log</button>
         <button onclick="window.location.href='./rules_assistant.html'">Rules Assistant (AI)</button>
         <button onclick="window.location.href='./database_query.html'">Database Query (AI)</button>
         <button onclick="window.location.href='./credit.html'">AI Credit</button>
@@ -168,6 +168,18 @@
     <p id="selector-pick" style="font-weight:bold;"></p>
     <h3>Current Choices</h3>
     <ul id="selector-pool"></ul>
+</div>
+
+<!-- Account -->
+<div class="form-container">
+    <h2>Account</h2>
+    <p style="color:#ccc; font-size:0.9em;">Signed in as <span id="who">…</span></p>
+    <label>Current password:</label>
+    <input type="password" id="pw-current" autocomplete="current-password">
+    <label>New password:</label>
+    <input type="password" id="pw-new" autocomplete="new-password" placeholder="At least 8 characters">
+    <button id="pw-btn">Change password</button>
+    <p id="pw-msg" style="display:none;"></p>
 </div>
 
 <!-- Score Tracker — last on the page; used less often than the rest -->
@@ -257,7 +269,15 @@ function renderRecords(rec, gp) {
 // this too; hiding the button just keeps it out of everyone else's way.
 async function loadMe() {
     const data = await apiGet('/api/me');
-    if (data?.user?.is_owner) document.getElementById('users-nav').style.display = '';
+    const me = data?.user;
+    if (!me) return;
+    document.getElementById('who').textContent = me.display_name || me.email;
+    // Imperium and Sleeping Gods are the owner's own campaign trackers. The
+    // server refuses them for anyone else; this keeps them off the page too.
+    if (me.is_owner) {
+        document.getElementById('users-nav').style.display = '';
+        document.querySelectorAll('.owner-only').forEach(el => el.style.display = '');
+    }
 }
 loadMe();
 
@@ -376,6 +396,29 @@ document.getElementById('search-nonempty-btn').addEventListener('click', async (
     if (!term) return;
     const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
     document.getElementById('search-nonempty-result').innerHTML = renderGameRow(data, '_nonempty');
+});
+
+// Change password
+document.getElementById('pw-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('pw-btn');
+    const msg = document.getElementById('pw-msg');
+    const current = document.getElementById('pw-current').value;
+    const next = document.getElementById('pw-new').value;
+    if (!current || !next) {
+        msg.textContent = 'Fill in both fields.'; msg.className = 'status-err';
+        msg.style.display = ''; return;
+    }
+    btn.disabled = true;
+    const res = await apiPost('/api/change_password',
+                              { current_password: current, new_password: next });
+    btn.disabled = false;
+    msg.textContent = res?.message || 'Could not change the password.';
+    msg.className = res?.success ? 'status-ok' : 'status-err';
+    msg.style.display = '';
+    if (res?.success) {
+        document.getElementById('pw-current').value = '';
+        document.getElementById('pw-new').value = '';
+    }
 });
 
 // Score tracker — lives in this browser, so a mid-game reload doesn't lose the

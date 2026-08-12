@@ -261,6 +261,11 @@ def db_bypasses_rls():
 
 @app.route('/search_sleeping_gods_location', methods=['GET'])
 def search_sleeping_gods_location():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     location = request.args.get('term', '0')
     conn = get_db_connection()
     cur = conn.cursor()
@@ -328,6 +333,11 @@ def search_sleeping_gods_location():
 
 @app.route('/search_sleeping_gods_notes', methods=['GET'])
 def search_sleeping_gods_notes():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     keyword = request.args.get('term', '0')
     conn = get_db_connection()
     cur = conn.cursor()
@@ -400,6 +410,11 @@ def search_sleeping_gods_notes():
 
 @app.route('/delete_sleeping_gods_row', methods=['POST'])
 def delete_sleeping_gods_row():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     data = request.get_json(force=True)
     row_id = data.get('id')
     if not row_id:
@@ -414,6 +429,11 @@ def delete_sleeping_gods_row():
 
 @app.route('/reset_visited_sleeping_gods', methods=['POST'])
 def reset_visited_sleeping_gods():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     try:
         # Connect to your database
         conn = get_db_connection()
@@ -437,6 +457,11 @@ def reset_visited_sleeping_gods():
 
 @app.route('/sleeping_gods_totems_update', methods=['POST'])
 def sleeping_gods_totems_update():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     try:
         data = request.get_json()
         totem_id = data['totemId']
@@ -941,6 +966,36 @@ def api_me():
     return jsonify({'success': True, 'user': user_public(current_user())})
 
 
+@app.route('/api/change_password', methods=['POST'])
+def api_change_password():
+    """Change your own password. Requires the current one, so a stolen token
+    can't lock you out of your own account."""
+    data = request.get_json() or {}
+    current = data.get('current_password') or ''
+    new = data.get('new_password') or ''
+    if len(new) < MIN_PASSWORD_LENGTH:
+        return jsonify({'success': False,
+                        'message': f'New password must be at least {MIN_PASSWORD_LENGTH} characters.'}), 400
+
+    user = current_user()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT password_hash FROM users WHERE id = %s", (user['id'],))
+    row = cur.fetchone()
+    if not row or not check_password_hash(row[0], current):
+        cur.close()
+        conn.close()
+        return jsonify({'success': False, 'message': 'Current password is wrong.'}), 403
+
+    cur.execute("UPDATE users SET password_hash = %s WHERE id = %s",
+                (generate_password_hash(new), user['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    # Existing tokens keep working: they identify the account, not the password.
+    return jsonify({'success': True, 'message': 'Password changed.'})
+
+
 @app.route('/api/users')
 def api_users():
     denied = owner_only()
@@ -1171,24 +1226,86 @@ def api_all_games():
     return jsonify(rows)
 
 
+# The civilisations grouped by expansion, with difficulty stars, exactly as
+# the page has always listed them. A play records its civilisation in the
+# `level` column, matched case-insensitively the way the old page did.
+IMPERIUM_CIVS = [
+    # Classics
+    ('Classics', 'Carthaginians', 2),
+    ('Classics', 'Celts', 2),
+    ('Classics', 'Greeks', 3),
+    ('Classics', 'Macedonians', 1),
+    ('Classics', 'Persians', 1),
+    ('Classics', 'Scythians', 2),
+    ('Classics', 'Vikings', 3),
+    # Legends
+    ('Legends', 'Arthurians', 5),
+    ('Legends', 'Atlanteans', 3),
+    ('Legends', 'Egyptians', 3),
+    ('Legends', 'Mauryans', 2),
+    ('Legends', 'Minoans', 2),
+    ('Legends', 'Olmecs', 4),
+    ('Legends', 'Qin', 2),
+    ('Legends', 'Utopians', 6),
+    # Horizons
+    ('Horizons', 'Abbasids', 2),
+    ('Horizons', 'Aksumites', 2),
+    ('Horizons', 'Cultists', 6),
+    ('Horizons', 'Guptas', 2),
+    ('Horizons', 'Inuit', 4),
+    ('Horizons', 'Japanese', 2),
+    ('Horizons', 'Magyars', 2),
+    ('Horizons', 'Martians', 2),
+    ('Horizons', 'Mayans', 2),
+    ('Horizons', 'Polynesians', 5),
+    ('Horizons', 'Sassanids', 4),
+    ('Horizons', 'Tang', 3),
+    ('Horizons', 'Wagadou', 3),
+]
+
+
 @app.route('/api/imperium_stats')
 def api_imperium_stats():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT level,
-            COUNT(CASE WHEN result ILIKE '%won%' THEN 1 END) AS won,
-            COUNT(CASE WHEN result ILIKE '%lost%' THEN 1 END) AS lost
-        FROM imperium GROUP BY level ORDER BY level
-    """)
-    rows = [{'level': r[0], 'won': r[1], 'lost': r[2]} for r in cur.fetchall()]
+    # One pass over the plays; the per-civilisation tally happens here rather
+    # than in the 56 separate count queries the old page used.
+    cur.execute("SELECT level, result FROM imperium")
+    plays = [((r[0] or '').lower(), (r[1] or '').lower()) for r in cur.fetchall()]
     cur.close()
     conn.close()
-    return jsonify(rows)
+
+    expansions = []
+    for expansion, name, stars in IMPERIUM_CIVS:
+        key = name.lower()
+        won = sum(1 for lvl, res in plays if key in lvl and 'won' in res)
+        lost = sum(1 for lvl, res in plays if key in lvl and 'lost' in res)
+        if not expansions or expansions[-1]['expansion'] != expansion:
+            expansions.append({'expansion': expansion, 'civilisations': []})
+        expansions[-1]['civilisations'].append(
+            {'name': name, 'stars': stars, 'won': won, 'lost': lost})
+
+    # Plays whose level matches no known civilisation — a new expansion, or a typo.
+    known = [name.lower() for _, name, _ in IMPERIUM_CIVS]
+    unmatched = sorted({lvl.strip() for lvl, _ in plays
+                        if lvl.strip() and not any(k in lvl for k in known)})
+
+    return jsonify({'expansions': expansions, 'unmatched_levels': unmatched,
+                    'total_plays': len(plays)})
 
 
 @app.route('/api/sleeping_gods_totems_data')
 def api_sleeping_gods_totems_data():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT id, totem, found FROM sleeping_gods_totems ORDER BY id")
@@ -1200,6 +1317,11 @@ def api_sleeping_gods_totems_data():
 
 @app.route('/api/add_sleeping_gods', methods=['POST'])
 def api_add_sleeping_gods():
+    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
+    # tables have no owner column, so the endpoint is the boundary.
+    denied = owner_only()
+    if denied:
+        return denied
     try:
         d = request.get_json() or {}
         def i(k): return int(d.get(k) or 0)
