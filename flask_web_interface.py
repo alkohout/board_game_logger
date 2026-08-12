@@ -16,6 +16,9 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, urlunsplit, quote
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+import smtplib
+import ssl as ssl_module
+from email.message import EmailMessage
 
 load_dotenv()
 
@@ -846,6 +849,64 @@ def recent_login_failures(cur, email):
     return cur.fetchone()[0]
 
 
+def owner_email():
+    """Where notifications go: the owner's own address, unless overridden."""
+    override = os.getenv('NOTIFY_EMAIL')
+    if override:
+        return override
+    conn = raw_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT email FROM users WHERE is_owner")
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else None
+    except psycopg2.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def send_notification(subject, body):
+    """Send the owner an email. Never raises: a notification failing must not
+    take down whatever triggered it.
+
+    Needs SMTP_HOST, SMTP_USER and SMTP_PASSWORD in .env. With Gmail that
+    means an app password, not the account password. Returns True if sent.
+    """
+    host = os.getenv('SMTP_HOST')
+    user = os.getenv('SMTP_USER')
+    password = os.getenv('SMTP_PASSWORD')
+    to_address = owner_email()
+    if not (host and user and password and to_address):
+        app.logger.warning('Email not configured — skipping notification: %s', subject)
+        return False
+
+    message = EmailMessage()
+    message['Subject'] = subject
+    message['From'] = os.getenv('SMTP_FROM', user)
+    message['To'] = to_address
+    message.set_content(body)
+
+    port = int(os.getenv('SMTP_PORT', '587'))
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=15,
+                                  context=ssl_module.create_default_context()) as server:
+                server.login(user, password)
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=15) as server:
+                server.starttls(context=ssl_module.create_default_context())
+                server.login(user, password)
+                server.send_message(message)
+        app.logger.info('Sent notification to %s: %s', to_address, subject)
+        return True
+    except Exception as e:                      # network, auth, anything
+        app.logger.error('Notification failed (%s): %s', subject, e)
+        return False
+
+
 @app.route('/api/signup', methods=['POST'])
 def api_signup():
     data = request.get_json() or {}
@@ -875,6 +936,15 @@ def api_signup():
     finally:
         cur.close()
         conn.close()
+
+    site = os.getenv('SITE_URL', 'https://alkohout.github.io/board_game_logger')
+    send_notification(
+        f'Board Game Logger: {email} wants an account',
+        f'{display_name or "Someone"} has requested an account.\n\n'
+        f'  Name:  {display_name or "(not given)"}\n'
+        f'  Email: {email}\n\n'
+        f'They cannot log in until you approve them:\n'
+        f'  {site}/users.html\n')
 
     return jsonify({'success': True, 'message':
                     'Thanks — your request is with the owner for approval.'})
@@ -929,7 +999,18 @@ def api_login():
 
 @app.route('/api/me')
 def api_me():
-    return jsonify({'success': True, 'user': user_public(current_user())})
+    user = current_user()
+    payload = {'success': True, 'user': user_public(user)}
+    if user['is_owner']:
+        # Belt and braces: if the notification email ever fails or gets
+        # filtered, a waiting request still shows up in the app.
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users WHERE status = 'pending'")
+        payload['pending_users'] = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+    return jsonify(payload)
 
 
 @app.route('/api/change_password', methods=['POST'])
