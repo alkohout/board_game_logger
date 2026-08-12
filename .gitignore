@@ -9,6 +9,8 @@ games_played_long_format.csv
 games.csv
 load_into_sql.ipynb
 .env
+# Database dumps, but not the schema migrations, which belong in the repo.
 *.sql
+!migrations/*.sql
 ssh.sh
 static/rulebooks/
