@@ -35,9 +35,14 @@
     </style>
 </head>
 <body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
     <div class="form-container" style="max-width:700px;">
-        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
-        <h1>Database Query</h1>
+        <h2>Database Query</h2>
         <p style="color:#ccc; font-size:0.9em;">
             Ask anything about your game log in plain English. Claude writes the SQL, it runs
             read-only against the database, and you get the answer plus the rows behind it.
@@ -65,8 +70,10 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
+    <script src="./tabs.js"></script>
     <script>
         requireAuth();
+        renderTabs('query');
 
         let history = [];   // [{question, sql, answer}] — context for follow-up questions
 

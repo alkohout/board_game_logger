@@ -120,3 +120,39 @@ nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 @media (max-width: 480px) {
     .form-container { margin: 10px; padding: 15px; }
 }
+
+
+/* =========================
+   Tabs (shared across pages)
+   ========================= */
+/* Tabs — same shape as the food-body-connection ones, in this palette:
+   equal-width buttons, a 3px underline on the active one, and a
+   scrolling strip rather than a squeeze on a narrow phone. */
+#tabbar {
+    position: sticky; top: 0; z-index: 50;
+    padding-bottom: 0; backdrop-filter: blur(3px);
+}
+.tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.2); }
+.tab {
+    flex: 1; margin: 0; padding: 12px 6px; min-height: 44px;
+    background: none; border: none; border-radius: 0;
+    border-bottom: 3px solid transparent;
+    color: #bbb; font-size: 0.95em; cursor: pointer;
+}
+.tab:hover { background: rgba(255,255,255,0.07); color: #fff; }
+.tab.active { color: #fff; font-weight: 600; border-bottom-color: #4CAF50; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.ai-card { border-bottom: 1px solid rgba(255,255,255,0.1); padding: 10px 0; }
+.ai-card:last-child { border-bottom: none; }
+.ai-card p { margin: 4px 0 0; color: #aaa; font-size: 0.85em; }
+
+@media (max-width: 640px) {
+    /* Six tabs won't fit a phone: let the strip scroll instead of
+       shrinking the tap targets. */
+    .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { flex: 0 0 auto; white-space: nowrap; font-size: 0.9em; padding: 12px 14px; }
+    #tabbar h1 { font-size: 1.4em; }
+}

@@ -15,38 +15,6 @@
         .record-when { display: block; font-size: 0.7em; color: #bbb; white-space: nowrap; }
         .record-now  { color: #90EE90; font-weight: bold; }
 
-        /* Tabs — same shape as the food-body-connection ones, in this palette:
-           equal-width buttons, a 3px underline on the active one, and a
-           scrolling strip rather than a squeeze on a narrow phone. */
-        #tabbar {
-            position: sticky; top: 0; z-index: 50;
-            padding-bottom: 0; backdrop-filter: blur(3px);
-        }
-        .tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.2); }
-        .tab {
-            flex: 1; margin: 0; padding: 12px 6px; min-height: 44px;
-            background: none; border: none; border-radius: 0;
-            border-bottom: 3px solid transparent;
-            color: #bbb; font-size: 0.95em; cursor: pointer;
-        }
-        .tab:hover { background: rgba(255,255,255,0.07); color: #fff; }
-        .tab.active { color: #fff; font-weight: 600; border-bottom-color: #4CAF50; }
-        .tab-panel { display: none; }
-        .tab-panel.active { display: block; }
-
-        .ai-card { border-bottom: 1px solid rgba(255,255,255,0.1); padding: 10px 0; }
-        .ai-card:last-child { border-bottom: none; }
-        .ai-card p { margin: 4px 0 0; color: #aaa; font-size: 0.85em; }
-
-        @media (max-width: 640px) {
-            /* Six tabs won't fit a phone: let the strip scroll instead of
-               shrinking the tap targets. */
-            .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-            .tabs::-webkit-scrollbar { display: none; }
-            .tab { flex: 0 0 auto; white-space: nowrap; font-size: 0.9em; padding: 12px 14px; }
-            #tabbar h1 { font-size: 1.4em; }
-        }
-
         /* Score tracker — a sheet you fill in at the table, so it has to work
            one-handed on a phone. 16px inputs stop iOS zooming on focus. */
         #score-wrap { overflow-x: auto; margin-bottom: 10px; }
@@ -83,14 +51,7 @@
 <!-- Tab bar: sticky so switching never means scrolling back up -->
 <div class="form-container" id="tabbar">
     <h1 style="margin:0 0 10px;">Board Game Logger</h1>
-    <div class="tabs">
-        <button class="tab" data-tab="log">Log</button>
-        <button class="tab" data-tab="stats">Stats</button>
-        <button class="tab" data-tab="games">Games</button>
-        <button class="tab" data-tab="rules">Rules</button>
-        <button class="tab" data-tab="tools">Tools</button>
-        <button class="tab" data-tab="account">Account</button>
-    </div>
+    <div id="tabbar-mount"></div>
 </div>
 
 <div class="tab-panel active" id="log-panel">
@@ -195,27 +156,8 @@
 </div>
 </div>
 
-<div class="tab-panel" id="rules-panel">
-
-<div class="form-container">
-    <h2>Rules</h2>
-    <div class="ai-card">
-        <button onclick="window.location.href='./rules_assistant.html'">Rules Assistant</button>
-        <p>Ask how a game is played. Reads the rulebooks you have uploaded, and
-           you can upload more there.</p>
-    </div>
-</div>
-</div>
-
 <div class="tab-panel" id="tools-panel">
 
-<div class="form-container">
-    <h2>Database Query</h2>
-    <div class="ai-card">
-        <button onclick="window.location.href='./database_query.html'">Open Database Query</button>
-        <p>Ask anything about your own game log in plain English.</p>
-    </div>
-</div>
 <!-- Selector -->
 <div class="form-container">
     <h2>Boardgame Selector</h2>
@@ -282,25 +224,25 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
+<script src="./tabs.js"></script>
 <script>
 requireAuth();
 
-// Tabs. The chosen one is remembered, so a reload — or coming back from the
-// Rules Assistant — lands you where you were rather than back at Log.
-const TAB_KEY = 'bg_tab';
-function showTab(name) {
-    const tabs = document.querySelectorAll('.tab');
+// The tab bar is shared (tabs.js); this page supplies the panel switching.
+window.showPanel = function (name) {
     const panels = document.querySelectorAll('.tab-panel');
-    if (name === 'ai') name = 'rules';        // the tab this replaced
-    if (![...tabs].some(t => t.dataset.tab === name)) name = 'log';
-    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    if (!document.getElementById(name + '-panel')) name = 'log';
     panels.forEach(p => p.classList.toggle('active', p.id === name + '-panel'));
-    localStorage.setItem(TAB_KEY, name);
     window.scrollTo(0, 0);
-}
-document.querySelectorAll('.tab').forEach(t =>
-    t.addEventListener('click', () => showTab(t.dataset.tab)));
-showTab(localStorage.getItem(TAB_KEY) || 'log');
+};
+(function () {
+    // Rules and Query are pages, so landing here with one of those remembered
+    // should show Log rather than nothing at all.
+    let start = rememberedTab();
+    if (!document.getElementById(start + '-panel')) start = 'log';
+    renderTabs(start);
+    window.showPanel(start);
+})();
 
 // Set today's date. Build it from local date parts rather than
 // toISOString(), which converts to UTC and so returns yesterday for
