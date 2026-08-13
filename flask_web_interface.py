@@ -1725,6 +1725,9 @@ def api_credit_checkout():
             }],
             success_url=f'{site}/credit.html?paid=1',
             cancel_url=f'{site}/credit.html?cancelled=1',
+            # Real money: Stripe emails the payer a receipt, and the address
+            # shows on the payment so a query can be traced to an account.
+            customer_email=user['email'],
             client_reference_id=str(purchase_id),
             metadata={'purchase_id': str(purchase_id), 'user_id': str(user['id'])},
         )
