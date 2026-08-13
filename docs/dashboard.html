@@ -87,7 +87,7 @@
         <button class="tab" data-tab="log">Log</button>
         <button class="tab" data-tab="stats">Stats</button>
         <button class="tab" data-tab="games">Games</button>
-        <button class="tab" data-tab="ai">AI</button>
+        <button class="tab" data-tab="rules">Rules</button>
         <button class="tab" data-tab="tools">Tools</button>
         <button class="tab" data-tab="account">Account</button>
     </div>
@@ -195,26 +195,27 @@
 </div>
 </div>
 
-<div class="tab-panel" id="ai-panel">
+<div class="tab-panel" id="rules-panel">
 
 <div class="form-container">
-    <h2>AI Assistants</h2>
+    <h2>Rules</h2>
     <div class="ai-card">
         <button onclick="window.location.href='./rules_assistant.html'">Rules Assistant</button>
-        <p>Ask how a game is played. Reads the rulebooks you have uploaded.</p>
-    </div>
-    <div class="ai-card">
-        <button onclick="window.location.href='./database_query.html'">Database Query</button>
-        <p>Ask anything about your own game log in plain English.</p>
-    </div>
-    <div class="ai-card">
-        <button class="btn-blue" onclick="window.location.href='./credit.html'">AI Credit</button>
-        <p>What you have left, what you have spent, and topping up.</p>
+        <p>Ask how a game is played. Reads the rulebooks you have uploaded, and
+           you can upload more there.</p>
     </div>
 </div>
 </div>
 
 <div class="tab-panel" id="tools-panel">
+
+<div class="form-container">
+    <h2>Database Query</h2>
+    <div class="ai-card">
+        <button onclick="window.location.href='./database_query.html'">Open Database Query</button>
+        <p>Ask anything about your own game log in plain English.</p>
+    </div>
+</div>
 <!-- Selector -->
 <div class="form-container">
     <h2>Boardgame Selector</h2>
@@ -270,6 +271,7 @@
     <p id="pw-msg" style="display:none;"></p>
 
     <nav style="margin-top:14px;">
+        <button class="btn-blue" onclick="window.location.href='./credit.html'">AI Credit</button>
         <button id="users-nav" style="display:none;" onclick="window.location.href='./users.html'">Users</button>
         <button class="btn-red" onclick="logout()">Log out</button>
     </nav>
@@ -289,6 +291,7 @@ const TAB_KEY = 'bg_tab';
 function showTab(name) {
     const tabs = document.querySelectorAll('.tab');
     const panels = document.querySelectorAll('.tab-panel');
+    if (name === 'ai') name = 'rules';        // the tab this replaced
     if (![...tabs].some(t => t.dataset.tab === name)) name = 'log';
     tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
     panels.forEach(p => p.classList.toggle('active', p.id === name + '-panel'));
