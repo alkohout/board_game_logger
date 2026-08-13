@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Imperium Stats</title>
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles.css?v=3">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -27,7 +27,7 @@
 </head>
 <body>
 
-<div class="form-container" id="tabbar">
+<div class="form-container" id="tabbar" style="max-width:520px;">
     <h1 style="margin:0 0 10px;">Board Game Logger</h1>
     <div id="tabbar-mount"></div>
 </div>
@@ -42,7 +42,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js"></script>
+    <script src="./tabs.js?v=3"></script>
     <script>
         requireAuth();
         renderTabs('games');
