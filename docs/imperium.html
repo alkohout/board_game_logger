@@ -26,9 +26,14 @@
     </style>
 </head>
 <body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
     <div class="form-container" style="max-width:520px;">
-        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
-        <h1>Imperium Stats</h1>
+        <h2>Imperium Stats</h2>
         <p style="color:#ccc; font-size:0.9em;">Playing as Romans. Stars are the deck's difficulty.</p>
         <div id="body"><p style="color:#aaa;">Loading...</p></div>
     </div>
@@ -37,8 +42,10 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
+    <script src="./tabs.js"></script>
     <script>
         requireAuth();
+        renderTabs('games');
 
         const esc = s => String(s ?? '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

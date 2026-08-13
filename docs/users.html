@@ -21,9 +21,14 @@
     </style>
 </head>
 <body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
     <div class="form-container" style="max-width:560px;">
-        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
-        <h1>Users</h1>
+        <h2>Users</h2>
         <p style="color:#ccc; font-size:0.9em;">
             New accounts arrive as <em>pending</em> and can't log in until you approve them.
         </p>
@@ -34,8 +39,10 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
+    <script src="./tabs.js"></script>
     <script>
         requireAuth();
+        renderTabs('account');
 
         const esc = s => String(s ?? '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

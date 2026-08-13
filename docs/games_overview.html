@@ -15,9 +15,14 @@
     </style>
 </head>
 <body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
     <div class="form-container" style="max-width:700px;">
-        <button class="btn-back" onclick="window.location.href='./dashboard.html'">← Back</button>
-        <h1>Games Overview</h1>
+        <h2>Games Overview</h2>
         <div class="period-grid" id="grid">
             <p style="color:#aaa;">Loading...</p>
         </div>
@@ -27,8 +32,10 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
+    <script src="./tabs.js"></script>
     <script>
         requireAuth();
+        renderTabs('games');
         const labels = {
             this_week: 'This Week', this_month: 'This Month', this_year: 'This Year',
             last_week: 'Last Week', last_month: 'Last Month', last_year: 'Last Year'
