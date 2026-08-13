@@ -15,6 +15,13 @@
         .record-when { display: block; font-size: 0.7em; color: #bbb; white-space: nowrap; }
         .record-now  { color: #90EE90; font-weight: bold; }
 
+        /* Search results: a two-column list, so nothing runs off a phone. */
+        .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 6px 0; }
+        .kv dt { color: #aaa; font-size: 0.85em; white-space: nowrap; }
+        .kv dd { margin: 0; overflow-wrap: anywhere; }
+        .kv-rule { border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 10px 0; }
+        .kv-notes { margin: 10px 0 0; font-size: 0.9em; overflow-wrap: anywhere; }
+
         /* Score tracker — a sheet you fill in at the table, so it has to work
            one-handed on a phone. 16px inputs stop iOS zooming on focus. */
         #score-wrap { overflow-x: auto; margin-bottom: 10px; }
@@ -417,17 +424,32 @@ document.getElementById('log-btn').addEventListener('click', async () => {
 
 // Search last played. The API suffixes the latest-detailed-entry fields
 // (result_nonempty, notes_nonempty, ...), so suffix — not prefix.
+// Label-and-value rather than two five-column tables: those needed about
+// 500px and the container is 400, so on a phone the right-hand columns fell
+// off the edge. This fits any width and reads the same on a desktop.
 function renderGameRow(data, suffix) {
     if (!data?.date_played) return '<p>No record found.</p>';
     const date = data['date_played' + suffix];
     if (!date) return '<p>No entry with any details recorded yet.</p>';
     const f = key => data[key + suffix] || '';
-    return `
-        <table><tr><th></th><th>Result</th><th>Level</th><th>My score</th><th>Bot score</th></tr>
-        <tr><td>${date}</td><td>${f('result')}</td><td>${f('level')}</td><td>${f('my_score')}</td><td>${f('bot_score')}</td></tr></table>
-        <br><table><tr><th></th><th>Total</th><th>This week</th><th>This month</th><th>This year</th></tr>
-        <tr><td>Played</td><td>${data.total_times_played}</td><td>${data.played_this_week}</td><td>${data.played_this_month}</td><td>${data.played_this_year}</td></tr></table>
-        <br>Notes: ${f('notes')}<br>Ranking: ${data.ranking}`;
+    const esc = v => String(v ?? '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Blank fields are dropped: an empty "Bot score" row is just noise.
+    const play = [['Date', date], ['Result', f('result')], ['Level', f('level')],
+                  ['My score', f('my_score')], ['Bot score', f('bot_score')]]
+                 .filter(([, v]) => v !== '' && v != null);
+    const counts = [['Total plays', data.total_times_played],
+                    ['This week', data.played_this_week],
+                    ['This month', data.played_this_month],
+                    ['This year', data.played_this_year],
+                    ['Ranking', data.ranking]];
+    const list = pairs => '<dl class="kv">' + pairs.map(([k, v]) =>
+        `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('') + '</dl>';
+
+    const notes = f('notes');
+    return list(play) + '<hr class="kv-rule">' + list(counts) +
+           (notes ? `<p class="kv-notes"><strong>Notes:</strong> ${esc(notes)}</p>` : '');
 }
 
 document.getElementById('search-btn').addEventListener('click', async () => {
