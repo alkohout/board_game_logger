@@ -650,6 +650,11 @@ def update():
 
 
 
+RULES_MODEL = 'claude-haiku-4-5'
+RULES_PRICE_IN = 1.00      # USD per million input tokens
+RULES_PRICE_OUT = 5.00
+
+
 def extract_pdf_text(pdf_bytes):
     """Plain text of a rulebook, page-marked so answers can still cite pages.
 
@@ -674,6 +679,28 @@ def extract_pdf_text(pdf_bytes):
     return '\n\n'.join(pages)
 
 
+# Roughly what a page of a rulebook costs as an image, measured across the
+# books here (Ark Nova's 20 pages came to ~50,700 tokens).
+TOKENS_PER_PDF_PAGE = 2500
+
+
+def count_pdf_pages(pdf_bytes):
+    if PdfReader is None:
+        return None
+    try:
+        return len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+    except Exception:
+        return None
+
+
+def image_cost_nzd(pages):
+    """What sending this many pages as images adds to a question."""
+    if not pages:
+        return None
+    usd = pages * TOKENS_PER_PDF_PAGE * RULES_PRICE_IN / 1_000_000
+    return round(usd * float(os.getenv('NZD_RATE', '1.68')), 3)
+
+
 @app.route('/upload_rulebook', methods=['POST'])
 def upload_rulebook():
     game_title = request.form.get('game_title', '').strip()
@@ -689,6 +716,7 @@ def upload_rulebook():
     pdf_file.stream.seek(0)
     pdf_bytes = pdf_file.stream.read()
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode('utf-8')
+    pages = count_pdf_pages(pdf_bytes)
     # Extracted once here rather than per question: the text costs about a
     # third of the tokens the page images do.
     rules_text = extract_pdf_text(pdf_bytes)
@@ -697,13 +725,14 @@ def upload_rulebook():
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO rulebooks (game_title, rulebook_name, pdf_data, rules_text)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO rulebooks (game_title, rulebook_name, pdf_data, rules_text, page_count)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (game_title, rulebook_name) DO UPDATE
                 SET pdf_data = EXCLUDED.pdf_data,
                     rules_text = EXCLUDED.rules_text,
+                    page_count = EXCLUDED.page_count,
                     uploaded_at = NOW()
-        """, (game_title, rulebook_name, pdf_b64, rules_text or None))
+        """, (game_title, rulebook_name, pdf_b64, rules_text or None, pages))
         conn.commit()
         cur.close()
         conn.close()
@@ -790,6 +819,10 @@ def ask_rules():
         if not game_title or not question:
             return jsonify({'success': False, 'message': 'Game and question required'}), 400
 
+        # Books the caller has asked to see as page images, either because the
+        # model said the text wasn't enough or because they ticked the box.
+        want_images = {n.strip().lower() for n in (data.get('with_images') or [])}
+
         blocked = ai_spend_blocked()
         if blocked:
             return blocked
@@ -797,7 +830,7 @@ def ask_rules():
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT pdf_data, bgg_forum_cache, rulebook_name, rules_text
+            SELECT pdf_data, bgg_forum_cache, rulebook_name, rules_text, page_count
             FROM rulebooks WHERE game_title = %s AND pdf_data IS NOT NULL
             ORDER BY rulebook_name
         """, (game_title,))
@@ -820,9 +853,14 @@ def ask_rules():
         # images extract nothing, so those still go as pages.
         book_blocks = []
         as_images = []
-        for pdf_b64, _bgg, name, text in rows:
+        available = []
+        for pdf_b64, _bgg, name, text, pages in rows:
             label = name or 'Rulebook'
-            if text and text.strip():
+            has_text = bool(text and text.strip())
+            available.append({'name': label, 'pages': pages, 'has_text': has_text,
+                              'image_cost_nzd': image_cost_nzd(pages)})
+            # Images when the caller asked for this book, or when it has no text.
+            if has_text and label.lower() not in want_images:
                 book_blocks.append({'type': 'text',
                                     'text': f'=== {label} ===\n{text}'})
             else:
@@ -831,6 +869,13 @@ def ask_rules():
                                                'media_type': 'application/pdf',
                                                'data': pdf_b64}})
                 as_images.append(label)
+
+        # Page images are big; refuse before the API does, with something useful.
+        image_pages = sum(b['pages'] or 0 for b in available if b['name'] in as_images)
+        if image_pages * TOKENS_PER_PDF_PAGE > 170_000:
+            return jsonify({'success': False, 'books': available,
+                            'message': (f'Those {image_pages} pages of images are too much for one '
+                                        f'question. Pick fewer books to send as images.')}), 400
 
         history = data.get('history', [])  # [{role, content}] of previous text turns
 
@@ -871,6 +916,16 @@ def ask_rules():
                 f'(3) your training knowledge of community clarifications and BGG discussions for this game. '
                 f'Just give the answer. Briefly note the source inline where useful '
                 f'(e.g. "Rulebook p.12" or "BGG community consensus") but never open with an explanation of what you do or don\'t have.'
+                + ("""
+
+The rulebooks above are the extracted text, so you cannot see artwork, icons,
+board layout or card faces. If — and only if — answering genuinely needs to
+see them, reply with exactly:
+
+NEED_IMAGES: <one sentence on what you need to see>
+
+and nothing else. The pages will then be sent as images and you will be asked
+again. Do not use this for anything the text can answer.""" if not want_images else '')
             ),
             messages=messages
         )
@@ -882,9 +937,26 @@ def ask_rules():
         cost_nzd = cost_usd * nzd_rate
         record_ai_usage('rules', cost_nzd, cost_usd)
 
+        answer_text = response.content[0].text
+        if answer_text.strip().startswith('NEED_IMAGES'):
+            # The text wasn't enough. Don't spend the images automatically —
+            # say what it costs and let the person decide.
+            reason = answer_text.split(':', 1)[-1].strip()
+            with_text = [b for b in available if b['has_text']]
+            return jsonify({
+                'success': False,
+                'needs_images': True,
+                'reason': reason,
+                'books': available,
+                'suggested': [b['name'] for b in with_text],
+                'message': 'The rulebook text alone cannot answer this.',
+                'cost_nzd': round(cost_nzd, 4), 'cost_usd': round(cost_usd, 4),
+            })
+
         return jsonify({
             'success': True,
-            'answer': response.content[0].text,
+            'answer': answer_text,
+            'books': available,
             'sources': sources_used,
             'cost_nzd': round(cost_nzd, 4),
             'cost_usd': round(cost_usd, 4)
@@ -1488,8 +1560,8 @@ def api_rules_assistant_data():
 # to be untangled after the fact. The owner is never blocked but is still
 # metered, so the running cost of other people's questions stays visible.
 
-FREE_MONTHLY_NZD = 0.50        # roughly 25-35 questions
-MIN_BALANCE_NZD = 0.05         # refuse below this: one question can cost ~0.03
+FREE_MONTHLY_NZD = 2.00        # ~100 database questions, or ~15 rulebook ones
+MIN_BALANCE_NZD = 0.25         # a rulebook question with images can cost ~0.20
 TOPUP_OPTIONS_NZD = (5, 10, 20)
 
 

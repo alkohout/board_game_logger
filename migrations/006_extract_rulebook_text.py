@@ -32,7 +32,7 @@ def main():
 
     conn = app.raw_db_connection()
     cur = conn.cursor()
-    where = '' if force else "AND (rules_text IS NULL OR rules_text = '')"
+    where = '' if force else "AND (rules_text IS NULL OR rules_text = '' OR page_count IS NULL)"
     cur.execute(f"""
         SELECT game_title, rulebook_name, pdf_data
         FROM rulebooks WHERE pdf_data IS NOT NULL {where}
@@ -46,11 +46,12 @@ def main():
     print(f'{len(rows)} rulebook(s) to process\n')
     no_text = []
     for game, name, b64 in rows:
-        text = app.extract_pdf_text(base64.b64decode(b64))
+        raw = base64.b64decode(b64)
+        text = app.extract_pdf_text(raw)
         cur.execute("""
-            UPDATE rulebooks SET rules_text = %s
+            UPDATE rulebooks SET rules_text = %s, page_count = %s
             WHERE game_title = %s AND rulebook_name = %s
-        """, (text or None, game, name))
+        """, (text or None, app.count_pdf_pages(raw), game, name))
         conn.commit()
         label = f'{game} / {name or "Rulebook"}'
         if text:

@@ -14,6 +14,14 @@
         .chat-a { background:rgba(255,255,255,0.08); border-radius:6px; padding:12px; line-height:1.6; }
         .chat-a strong { color:#fff; }
         .chat-meta { font-size:0.72em; color:#666; margin-top:4px; }
+        .needs-images {
+            background:rgba(255,213,79,0.12); border:1px solid rgba(255,213,79,0.4);
+            border-radius:6px; padding:12px; margin-top:8px;
+        }
+        .needs-images h4 { margin:0 0 6px; color:#FFD54F; font-size:0.95em; }
+        .needs-images label { display:block; font-weight:normal; font-size:0.9em; margin:4px 0; }
+        .needs-images .cost { color:#aaa; font-size:0.85em; }
+        .needs-images .total { margin:8px 0; font-size:0.9em; }
     </style>
     <script>
         function renderAnswer(text) {
@@ -240,6 +248,49 @@
 
         let conversationHistory = [];
 
+        // Rulebooks go to the model as extracted text, which is about a third
+        // the cost of the page images. When the text genuinely isn't enough the
+        // model says so, and this offers the images with the price attached.
+        function offerImages(question, data) {
+            const box = document.createElement('div');
+            box.className = 'needs-images';
+            const books = (data.books || []).filter(b => b.pages);
+            const boxes = books.map((b, i) => `
+                <label>
+                    <input type="checkbox" data-name="${esc(b.name)}"
+                           data-cost="${b.image_cost_nzd || 0}"
+                           ${b.has_text ? '' : 'checked disabled'}>
+                    ${esc(b.name)}
+                    <span class="cost">— ${b.pages} pages, +NZ$${(b.image_cost_nzd || 0).toFixed(2)}${
+                        b.has_text ? '' : ' (no text, always sent as images)'}</span>
+                </label>`).join('');
+            box.innerHTML = `
+                <h4>The text can't answer this</h4>
+                <p style="margin:0 0 8px; font-size:0.9em;">${esc(data.reason || '')}</p>
+                <p style="margin:0 0 6px; font-size:0.9em;">Send the pages as images instead?</p>
+                ${boxes}
+                <p class="total">Extra cost: <strong id="img-total">NZ$0.00</strong></p>
+                <button class="btn-blue" id="retry-images">Ask again with images</button>`;
+            document.getElementById('conversation').appendChild(box);
+
+            const update = () => {
+                const total = [...box.querySelectorAll('input:checked')]
+                    .reduce((sum, el) => sum + Number(el.dataset.cost || 0), 0);
+                box.querySelector('#img-total').textContent = 'NZ$' + total.toFixed(2);
+            };
+            box.querySelectorAll('input').forEach(el => el.addEventListener('change', update));
+            update();
+
+            box.querySelector('#retry-images').addEventListener('click', () => {
+                const chosen = [...box.querySelectorAll('input:checked')].map(el => el.dataset.name);
+                box.remove();
+                askQuestion(question, chosen);
+            });
+        }
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
         function appendToConversation(question, answer, sources, costNzd, costUsd) {
             const div = document.createElement('div');
             div.innerHTML = `
@@ -259,16 +310,16 @@
 
         document.getElementById('new-convo-btn').addEventListener('click', clearConversation);
 
-        document.getElementById('ask-btn').addEventListener('click', async () => {
-            const question = document.getElementById('question').value.trim();
-            if (!selectedGame) { alert('Select a game first.'); return; }
-            if (!question) { alert('Enter a question.'); return; }
+        async function askQuestion(question, withImages) {
             const btn = document.getElementById('ask-btn');
             btn.disabled = true;
             document.getElementById('spinner').style.display = '';
             document.getElementById('cost-line').style.display = 'none';
 
-            const data = await apiPost('/ask_rules', { game_title: selectedGame, question, history: conversationHistory });
+            const data = await apiPost('/ask_rules', {
+                game_title: selectedGame, question, history: conversationHistory,
+                with_images: withImages || []
+            });
             btn.disabled = false;
             document.getElementById('spinner').style.display = 'none';
 
@@ -281,6 +332,9 @@
                 document.getElementById('cost-line').textContent =
                     'Total turns: ' + (conversationHistory.length / 2) + ' | Last cost: NZ$' + data.cost_nzd.toFixed(4);
                 document.getElementById('cost-line').style.display = '';
+            } else if (data?.needs_images) {
+                // Not an error: the model has told us the text isn't enough.
+                offerImages(question, data);
             } else {
                 const errDiv = document.createElement('div');
                 errDiv.style.cssText = 'color:#ff6b6b; margin-top:8px;';
@@ -289,6 +343,13 @@
                     : 'Error: ' + (data?.message || 'unknown');
                 document.getElementById('conversation').appendChild(errDiv);
             }
+        }
+
+        document.getElementById('ask-btn').addEventListener('click', () => {
+            const question = document.getElementById('question').value.trim();
+            if (!selectedGame) { alert('Select a game first.'); return; }
+            if (!question) { alert('Enter a question.'); return; }
+            askQuestion(question, []);
         });
 
         document.getElementById('set-bgg-btn').addEventListener('click', async () => {
