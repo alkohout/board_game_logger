@@ -11,10 +11,19 @@
 --
 --   ./venv/bin/python migrations/run_sql.py migrations/004_owner_only_views.sql
 --
--- Needs PostgreSQL 15 or newer. Safe to re-run.
+-- Must run as the database owner: altering a view requires owning it. Needs
+-- PostgreSQL 15 or newer. Safe to re-run.
 
 BEGIN;
 
-ALTER VIEW imperium SET (security_invoker = true);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'imperium' AND relkind = 'v') THEN
+        EXECUTE 'ALTER VIEW imperium SET (security_invoker = true)';
+        RAISE NOTICE 'imperium: security_invoker enabled';
+    ELSE
+        RAISE NOTICE 'imperium: not a view here, nothing to do';
+    END IF;
+END $$;
 
 COMMIT;

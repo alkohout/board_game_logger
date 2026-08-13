@@ -40,6 +40,11 @@ OWNED_TABLES = ('games', 'rulebooks')
 
 
 def main():
+    # Migrations do DDL — create roles, alter tables, own views — so they must
+    # connect as the database owner from DATABASE_URL, not as the restricted
+    # app role. DB_USER is the app's override and does not apply here.
+    os.environ.pop('DB_USER', None)
+
     db_password = os.getenv('BGL_DB_PASSWORD')
     if not db_password:
         sys.exit('Set BGL_DB_PASSWORD to the password you want the app role to use.')

@@ -19,6 +19,11 @@ import flask_web_interface as app                # noqa: E402
 
 
 def main():
+    # Migrations do DDL — create roles, alter tables, own views — so they must
+    # connect as the database owner from DATABASE_URL, not as the restricted
+    # app role. DB_USER is the app's override and does not apply here.
+    os.environ.pop('DB_USER', None)
+
     if len(sys.argv) != 2:
         sys.exit('usage: run_sql.py <file.sql>')
     path = sys.argv[1]
