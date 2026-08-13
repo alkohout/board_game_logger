@@ -98,7 +98,8 @@
             const usage = d.recent_usage.map(u => `<div>
                 <span>${u.kind === 'rules' ? 'Rules Assistant' : 'Database Query'}
                     <span class="pill p-${u.funded_by}">${u.funded_by}</span></span>
-                <span class="meta">${money(u.cost_nzd)} · ${when(u.at)}</span></div>`).join('');
+                <span class="meta">${money(u.cost_nzd)}${
+                    u.tokens ? ` · ${u.tokens.toLocaleString()} tokens` : ''} · ${when(u.at)}</span></div>`).join('');
             const buys = d.purchases.map(p => `<div>
                 <span>Top-up ${money(p.amount_nzd)}
                     <span class="pill p-${p.status}">${p.status}</span></span>

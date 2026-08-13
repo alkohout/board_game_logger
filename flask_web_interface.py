@@ -650,6 +650,18 @@ def update():
 
 
 
+def usage_tokens(*usages):
+    """The four token buckets across one or more calls, for the ledger."""
+    total = {'input_tokens': 0, 'output_tokens': 0,
+             'cache_write_tokens': 0, 'cache_read_tokens': 0}
+    for u in usages:
+        total['input_tokens'] += u.input_tokens or 0
+        total['output_tokens'] += u.output_tokens or 0
+        total['cache_write_tokens'] += getattr(u, 'cache_creation_input_tokens', 0) or 0
+        total['cache_read_tokens'] += getattr(u, 'cache_read_input_tokens', 0) or 0
+    return total
+
+
 def usage_cost_usd(usage, price_in, price_out):
     """Cost of one call, counting the cached tokens too.
 
@@ -948,7 +960,7 @@ again. Do not use this for anything the text can answer.""" if not want_images e
         cost_usd = usage_cost_usd(response.usage, RULES_PRICE_IN, RULES_PRICE_OUT)
         nzd_rate = float(os.getenv('NZD_RATE', '1.68'))
         cost_nzd = cost_usd * nzd_rate
-        record_ai_usage('rules', cost_nzd, cost_usd)
+        record_ai_usage('rules', cost_nzd, cost_usd, usage_tokens(response.usage))
 
         answer_text = response.content[0].text
         if answer_text.strip().startswith('NEED_IMAGES'):
@@ -1640,7 +1652,7 @@ def ai_spend_blocked():
     return None
 
 
-def record_ai_usage(kind, cost_nzd, cost_usd):
+def record_ai_usage(kind, cost_nzd, cost_usd, tokens=None):
     """Bill a question. Free grant first, then purchased credit.
 
     Charged whole to one pot rather than split across both — a question costs
@@ -1655,10 +1667,14 @@ def record_ai_usage(kind, cost_nzd, cost_usd):
         funded_by = 'free' if ai_balance(user['id'])['free_remaining'] >= cost_nzd else 'credit'
     conn = get_db_connection()
     cur = conn.cursor()
+    t = tokens or {}
     cur.execute("""
-        INSERT INTO ai_usage (user_id, kind, cost_nzd, cost_usd, funded_by)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (user['id'], kind, round(cost_nzd, 5), round(cost_usd, 5), funded_by))
+        INSERT INTO ai_usage (user_id, kind, cost_nzd, cost_usd, funded_by,
+                              input_tokens, output_tokens, cache_write_tokens, cache_read_tokens)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (user['id'], kind, round(cost_nzd, 5), round(cost_usd, 5), funded_by,
+          t.get('input_tokens'), t.get('output_tokens'),
+          t.get('cache_write_tokens'), t.get('cache_read_tokens')))
     conn.commit()
     cur.close()
     conn.close()
@@ -1671,11 +1687,14 @@ def api_credit():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT kind, cost_nzd, funded_by, created_at FROM ai_usage
-        WHERE user_id = %s ORDER BY created_at DESC LIMIT 20
+        SELECT kind, cost_nzd, funded_by, created_at,
+               input_tokens, output_tokens, cache_write_tokens, cache_read_tokens
+        FROM ai_usage WHERE user_id = %s ORDER BY created_at DESC LIMIT 20
     """, (user['id'],))
     recent = [{'kind': r[0], 'cost_nzd': float(r[1]), 'funded_by': r[2],
-               'at': r[3].isoformat()} for r in cur.fetchall()]
+               'at': r[3].isoformat(),
+               'tokens': ((r[4] or 0) + (r[5] or 0) + (r[6] or 0) + (r[7] or 0)) or None}
+              for r in cur.fetchall()]
     cur.execute("""
         SELECT amount_nzd, status, created_at, paid_at FROM credit_purchases
         WHERE user_id = %s ORDER BY created_at DESC LIMIT 20
@@ -1999,14 +2018,14 @@ def api_ask_database():
 
     if sql.upper().startswith('UNSUPPORTED'):
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage, answer_response.usage))
         return jsonify({'success': False, 'message': sql.split(':', 1)[-1].strip(),
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
 
     problem = db_query_check(sql)
     if problem:
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage))
         return jsonify({'success': False, 'message': problem, 'sql': sql,
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
 
@@ -2015,7 +2034,7 @@ def api_ask_database():
         columns, rows, truncated = db_query_run(sql.rstrip(';'), is_owner=is_owner)
     except psycopg2.Error as e:
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage))
         return jsonify({'success': False, 'message': f'Query failed: {str(e).strip()}',
                         'sql': sql, 'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
 
@@ -2041,7 +2060,7 @@ def api_ask_database():
     except (anthropic.APIStatusError, anthropic.APIConnectionError):
         # The data is good even if the write-up failed — return it without prose.
         usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage))
         return jsonify({'success': True, 'sql': sql, 'columns': columns, 'rows': rows,
                         'truncated': truncated, 'answer': '',
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
