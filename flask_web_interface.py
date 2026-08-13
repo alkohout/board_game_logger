@@ -15,6 +15,7 @@ except ImportError:
     PdfReader = None
 import io
 import base64
+import requests          # for a self-hosted, OpenAI-compatible model
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -1618,6 +1619,70 @@ def api_rules_assistant_data():
     return jsonify({'game_titles': game_titles, 'has_rulebook': has_rulebook, 'rulebook_names': rulebook_names, 'has_bgg': has_bgg})
 
 
+# ── Optional self-hosted model ────────────────────────────────────────────────
+# Point LOCAL_LLM_URL at anything speaking the OpenAI chat API — Ollama,
+# llama.cpp's server, vLLM — and name the features it should answer:
+#
+#   LOCAL_LLM_URL=http://192.168.1.50:11434/v1
+#   LOCAL_LLM_MODEL=qwen2.5-coder:14b
+#   LOCAL_LLM_FOR=db_query
+#
+# Left unset, everything goes to Claude exactly as before. Per-feature because
+# the two are very different asks: Database Query sends ~800 tokens and wants
+# one SELECT, which a 14B model on a CPU manages; the Rules Assistant sends
+# 65,000 tokens of rulebook, which needs a GPU to be bearable.
+
+LOCAL_LLM_URL = os.getenv('LOCAL_LLM_URL')
+LOCAL_LLM_MODEL = os.getenv('LOCAL_LLM_MODEL', 'qwen2.5-coder:14b')
+LOCAL_LLM_FOR = {f.strip() for f in os.getenv('LOCAL_LLM_FOR', '').split(',') if f.strip()}
+LOCAL_LLM_TIMEOUT = int(os.getenv('LOCAL_LLM_TIMEOUT', '300'))
+
+
+class ModelReply:
+    """What both providers hand back: the text, token counts, and who answered."""
+
+    def __init__(self, text, usage, provider, cost_usd):
+        self.text = text
+        self.usage = usage
+        self.provider = provider
+        self.cost_usd = cost_usd
+
+
+class LocalUsage:
+    def __init__(self, prompt, completion):
+        self.input_tokens = prompt
+        self.output_tokens = completion
+        self.cache_creation_input_tokens = 0
+        self.cache_read_input_tokens = 0
+
+
+def local_llm_for(feature):
+    return bool(LOCAL_LLM_URL) and feature in LOCAL_LLM_FOR
+
+
+def local_llm_chat(system, user, max_tokens):
+    """One completion from the self-hosted model. Raises on failure so the
+    caller can fall back to Claude rather than serve a broken answer."""
+    response = requests.post(
+        LOCAL_LLM_URL.rstrip('/') + '/chat/completions',
+        timeout=LOCAL_LLM_TIMEOUT,
+        headers={'Authorization': 'Bearer ' + os.getenv('LOCAL_LLM_KEY', 'not-needed')},
+        json={
+            'model': LOCAL_LLM_MODEL,
+            'max_tokens': max_tokens,
+            'messages': [{'role': 'system', 'content': system},
+                         {'role': 'user', 'content': user}],
+        },
+    )
+    response.raise_for_status()
+    body = response.json()
+    text = (body['choices'][0]['message']['content'] or '').strip()
+    usage = body.get('usage') or {}
+    return ModelReply(text,
+                      LocalUsage(usage.get('prompt_tokens', 0), usage.get('completion_tokens', 0)),
+                      'local', 0.0)      # electricity isn't billed per question
+
+
 # ── AI credit ─────────────────────────────────────────────────────────────────
 # Every AI question is metered against a balance in two parts: a free grant
 # that resets each calendar month, and credit bought through Stripe that
@@ -1989,6 +2054,13 @@ def db_query_run(sql, is_owner=False):
         conn.close()
 
 
+def reply_cost(*replies):
+    """USD/NZD across replies from either provider. A local model costs nothing
+    per question, so its replies contribute zero."""
+    usd = sum(r.cost_usd for r in replies)
+    return usd, usd * float(os.getenv('NZD_RATE', '1.68'))
+
+
 def db_query_cost(*priced):
     """Combined USD/NZD cost. Each argument is (response, usd_in, usd_out) per MTok."""
     usd = sum(usage_cost_usd(r.usage, price_in, price_out) for r, price_in, price_out in priced)
@@ -2015,9 +2087,12 @@ def api_ask_database():
     # This endpoint runs SQL the model writes, so it is only safe while the
     # database is enforcing row-level security. A superuser connection ignores
     # policies, which would let a generated query read every user's rows.
-    blocked = ai_spend_blocked()
-    if blocked:
-        return blocked
+    # A local model costs nothing per question, so there is nothing to charge
+    # for and no reason to turn anyone away.
+    if not local_llm_for('db_query'):
+        blocked = ai_spend_blocked()
+        if blocked:
+            return blocked
 
     if db_bypasses_rls():
         return jsonify({'success': False, 'message':
@@ -2040,40 +2115,49 @@ def api_ask_database():
         f'\nEarlier question: {h.get("question", "")}\nSQL you wrote: {h.get("sql", "")}\n'
         for h in history[-3:]
     )
-    try:
-        sql_response = client.messages.create(
-            model=DB_QUERY_SQL_MODEL,
-            max_tokens=8000,
-            output_config={'effort': DB_QUERY_SQL_EFFORT},
-            system=(
+    sql_system = (
                 'You write PostgreSQL for a personal board game log. Reply with one '
                 'SELECT statement and nothing else — no explanation, no markdown fences, '
                 'no trailing semicolon. If the question cannot be answered from this '
                 'schema, reply with exactly "UNSUPPORTED: " followed by a short reason.\n\n'
                 f'Schema:\n{schema}\n{notes}\n'
-                f'Return at most {DB_QUERY_MAX_ROWS} rows — add a LIMIT unless the query '
-                'is already an aggregate. Never select the columns marked HUGE.'
-            ),
-            messages=[{'role': 'user', 'content': f'{prior}\nQuestion: {question}'}],
-        )
+        f'Return at most {DB_QUERY_MAX_ROWS} rows — add a LIMIT unless the query '
+        'is already an aggregate. Never select the columns marked HUGE.'
+    )
+    sql_user = f'{prior}\nQuestion: {question}'
+
+    try:
+        if local_llm_for('db_query'):
+            sql_reply = local_llm_chat(sql_system, sql_user, 2000)
+        else:
+            response = client.messages.create(
+                model=DB_QUERY_SQL_MODEL, max_tokens=8000,
+                output_config={'effort': DB_QUERY_SQL_EFFORT},
+                system=sql_system,
+                messages=[{'role': 'user', 'content': sql_user}])
+            sql_reply = ModelReply(db_query_text(response), response.usage, 'claude',
+                                   usage_cost_usd(response.usage, *DB_QUERY_SQL_PRICE))
+    except requests.RequestException as e:
+        return jsonify({'success': False,
+                        'message': f'Could not reach the local model: {e}'}), 502
     except anthropic.APIStatusError as e:
         return jsonify({'success': False, 'message': f'Claude error: {e.message}'}), 502
     except anthropic.APIConnectionError:
         return jsonify({'success': False, 'message': 'Could not reach Claude.'}), 502
 
-    sql = db_query_text(sql_response)
+    sql = sql_reply.text
     sql = re.sub(r'^```(?:sql)?|```$', '', sql, flags=re.I | re.M).strip()
 
     if sql.upper().startswith('UNSUPPORTED'):
-        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage, answer_response.usage))
+        usd, nzd = reply_cost(sql_reply)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_reply.usage))
         return jsonify({'success': False, 'message': sql.split(':', 1)[-1].strip(),
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
 
     problem = db_query_check(sql)
     if problem:
-        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage))
+        usd, nzd = reply_cost(sql_reply)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_reply.usage))
         return jsonify({'success': False, 'message': problem, 'sql': sql,
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
 
@@ -2081,8 +2165,8 @@ def api_ask_database():
     try:
         columns, rows, truncated = db_query_run(sql.rstrip(';'), is_owner=is_owner)
     except psycopg2.Error as e:
-        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage))
+        usd, nzd = reply_cost(sql_reply)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_reply.usage))
         return jsonify({'success': False, 'message': f'Query failed: {str(e).strip()}',
                         'sql': sql, 'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)}), 400
 
@@ -2090,36 +2174,41 @@ def api_ask_database():
     table = ' | '.join(columns) + '\n' + '\n'.join(' | '.join(r) for r in rows)
     if truncated:
         table += f'\n(only the first {DB_QUERY_MAX_ROWS} rows are shown)'
-    try:
-        answer_response = client.messages.create(
-            model=DB_QUERY_WRITEUP_MODEL,
-            max_tokens=2000,
-            system=(
+    answer_system = (
                 'You answer questions about a personal board game log. You are given the '
                 'question, the SQL that was run, and its results. Answer directly in a '
                 'sentence or two — no preamble, no restating the question, no markdown '
                 'tables (the results are already shown to the user). Quote the actual '
-                'numbers. If the results are empty, say so plainly and, if the reason is '
-                'obvious from the query, say what it is.'
-            ),
-            messages=[{'role': 'user', 'content':
-                       f'Question: {question}\n\nSQL:\n{sql}\n\nResults ({len(rows)} rows):\n{table}'}],
-        )
-    except (anthropic.APIStatusError, anthropic.APIConnectionError):
+        'numbers. If the results are empty, say so plainly and, if the reason is '
+        'obvious from the query, say what it is.'
+    )
+    answer_user = f'Question: {question}\n\nSQL:\n{sql}\n\nResults ({len(rows)} rows):\n{table}'
+
+    try:
+        if local_llm_for('db_query'):
+            answer_reply = local_llm_chat(answer_system, answer_user, 1000)
+        else:
+            response = client.messages.create(
+                model=DB_QUERY_WRITEUP_MODEL, max_tokens=2000,
+                system=answer_system,
+                messages=[{'role': 'user', 'content': answer_user}])
+            answer_reply = ModelReply(db_query_text(response), response.usage, 'claude',
+                                      usage_cost_usd(response.usage, *DB_QUERY_WRITEUP_PRICE))
+    except (requests.RequestException, anthropic.APIStatusError, anthropic.APIConnectionError):
         # The data is good even if the write-up failed — return it without prose.
-        usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE))
-        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_response.usage))
+        usd, nzd = reply_cost(sql_reply)
+        record_ai_usage('db_query', nzd, usd, usage_tokens(sql_reply.usage))
         return jsonify({'success': True, 'sql': sql, 'columns': columns, 'rows': rows,
-                        'truncated': truncated, 'answer': '',
+                        'truncated': truncated, 'answer': '', 'provider': sql_reply.provider,
                         'cost_usd': round(usd, 4), 'cost_nzd': round(nzd, 4)})
 
-    usd, nzd = db_query_cost((sql_response, *DB_QUERY_SQL_PRICE),
-                          (answer_response, *DB_QUERY_WRITEUP_PRICE))
+    usd, nzd = reply_cost(sql_reply, answer_reply)
     record_ai_usage('db_query', nzd, usd)
     return jsonify({
         'success': True,
         'balance_nzd': balance_after(),
-        'answer': db_query_text(answer_response),
+        'provider': answer_reply.provider,
+        'answer': answer_reply.text,
         'sql': sql,
         'columns': columns,
         'rows': rows,

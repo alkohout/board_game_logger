@@ -136,8 +136,9 @@
                 const left = data.balance_nzd != null
                     ? ` | NZ$${data.balance_nzd.toFixed(2)} credit left`
                     : '';
+                const who = data.provider === 'local' ? ' | answered by the local model' : '';
                 cost.textContent =
-                    `Questions asked: ${history.length} | Last cost: NZ$${data.cost_nzd.toFixed(4)}${left}`;
+                    `Questions asked: ${history.length} | Last cost: NZ$${data.cost_nzd.toFixed(4)}${left}${who}`;
                 cost.style.display = '';
             }
         }
