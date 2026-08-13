@@ -424,6 +424,8 @@ document.getElementById('pw-btn').addEventListener('click', async () => {
     if (res?.success) {
         document.getElementById('pw-current').value = '';
         document.getElementById('pw-new').value = '';
+        // The change retires every older token, including this tab's.
+        if (res.token) localStorage.setItem('bg_token', res.token);
     }
 });
 

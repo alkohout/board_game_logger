@@ -82,8 +82,10 @@ def token_serializer():
     return URLSafeTimedSerializer(app.secret_key or '', salt='bgl-session')
 
 
-def issue_token(user_id):
-    return token_serializer().dumps({'uid': user_id})
+def issue_token(user_id, token_version):
+    """A token names the account *and* the password generation it was issued
+    under, so changing a password retires every token that predates it."""
+    return token_serializer().dumps({'uid': user_id, 'v': token_version})
 
 
 def load_user(user_id):
@@ -92,7 +94,7 @@ def load_user(user_id):
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, email, display_name, status, is_owner
+            SELECT id, email, display_name, status, is_owner, token_version
             FROM users WHERE id = %s
         """, (user_id,))
         row = cur.fetchone()
@@ -102,7 +104,7 @@ def load_user(user_id):
     if not row or row[3] != 'active':
         return None
     return {'id': row[0], 'email': row[1], 'display_name': row[2],
-            'status': row[3], 'is_owner': row[4]}
+            'status': row[3], 'is_owner': row[4], 'token_version': row[5]}
 
 
 def request_user():
@@ -116,7 +118,8 @@ def request_user():
             data = None
         if data and data.get('uid'):
             user = load_user(data['uid'])
-            if user:
+            # A token from before the last password change no longer matches.
+            if user and data.get('v') == user['token_version']:
                 return user
     return None
 
@@ -967,7 +970,7 @@ def api_login():
                             'Too many attempts. Try again in a few minutes.'}), 429
 
         cur.execute("""
-            SELECT id, email, display_name, status, is_owner, password_hash
+            SELECT id, email, display_name, status, is_owner, password_hash, token_version
             FROM users WHERE lower(email) = lower(%s)
         """, (email,))
         row = cur.fetchone()
@@ -988,12 +991,12 @@ def api_login():
         cur.execute("DELETE FROM login_attempts WHERE lower(email) = lower(%s)", (email,))
         conn.commit()
         user = {'id': row[0], 'email': row[1], 'display_name': row[2],
-                'status': row[3], 'is_owner': row[4]}
+                'status': row[3], 'is_owner': row[4], 'token_version': row[6]}
     finally:
         cur.close()
         conn.close()
 
-    return jsonify({'success': True, 'token': issue_token(user['id']),
+    return jsonify({'success': True, 'token': issue_token(user['id'], user['token_version']),
                     'user': user_public(user)})
 
 
@@ -1034,13 +1037,18 @@ def api_change_password():
         conn.close()
         return jsonify({'success': False, 'message': 'Current password is wrong.'}), 403
 
-    cur.execute("UPDATE users SET password_hash = %s WHERE id = %s",
-                (generate_password_hash(new), user['id']))
+    cur.execute("""
+        UPDATE users SET password_hash = %s, token_version = token_version + 1
+        WHERE id = %s RETURNING token_version
+    """, (generate_password_hash(new), user['id']))
+    new_version = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
-    # Existing tokens keep working: they identify the account, not the password.
-    return jsonify({'success': True, 'message': 'Password changed.'})
+    # Every token issued before now is dead, including any an attacker holds.
+    # Hand this session a fresh one so the person changing it stays logged in.
+    return jsonify({'success': True, 'token': issue_token(user['id'], new_version),
+                    'message': 'Password changed. Any other signed-in devices have been logged out.'})
 
 
 @app.route('/api/users')
