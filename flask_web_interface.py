@@ -9,6 +9,11 @@ try:
     import stripe                       # only needed for credit top-ups
 except ImportError:                     # keeps the app up if it isn't installed yet
     stripe = None
+try:
+    from pypdf import PdfReader         # for pulling text out of rulebooks
+except ImportError:
+    PdfReader = None
+import io
 import base64
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
@@ -645,6 +650,30 @@ def update():
 
 
 
+def extract_pdf_text(pdf_bytes):
+    """Plain text of a rulebook, page-marked so answers can still cite pages.
+
+    Returns '' for a PDF that is really scanned images — a couple of the books
+    here are — and the caller falls back to sending the pages themselves.
+    """
+    if PdfReader is None:
+        return ''
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+    except Exception as e:
+        app.logger.warning('Could not read PDF for text: %s', e)
+        return ''
+    pages = []
+    for number, page in enumerate(reader.pages, start=1):
+        try:
+            body = page.extract_text() or ''
+        except Exception:
+            body = ''
+        if body.strip():
+            pages.append(f'[page {number}]\n{body.strip()}')
+    return '\n\n'.join(pages)
+
+
 @app.route('/upload_rulebook', methods=['POST'])
 def upload_rulebook():
     game_title = request.form.get('game_title', '').strip()
@@ -658,24 +687,37 @@ def upload_rulebook():
         return jsonify({'success': False, 'message': 'File must be a PDF'}), 400
 
     pdf_file.stream.seek(0)
-    pdf_b64 = base64.standard_b64encode(pdf_file.stream.read()).decode('utf-8')
+    pdf_bytes = pdf_file.stream.read()
+    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode('utf-8')
+    # Extracted once here rather than per question: the text costs about a
+    # third of the tokens the page images do.
+    rules_text = extract_pdf_text(pdf_bytes)
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO rulebooks (game_title, rulebook_name, pdf_data)
-            VALUES (%s, %s, %s)
+            INSERT INTO rulebooks (game_title, rulebook_name, pdf_data, rules_text)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (game_title, rulebook_name) DO UPDATE
                 SET pdf_data = EXCLUDED.pdf_data,
+                    rules_text = EXCLUDED.rules_text,
                     uploaded_at = NOW()
-        """, (game_title, rulebook_name, pdf_b64))
+        """, (game_title, rulebook_name, pdf_b64, rules_text or None))
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         return jsonify({'success': False, 'message': f'DB error: {str(e)}'}), 500
-    return jsonify({'success': True, 'message': f'"{rulebook_name}" saved for {game_title}'})
+    if rules_text:
+        detail = f'text extracted, {len(rules_text):,} characters'
+    elif PdfReader is None:
+        detail = 'stored as pages — text extraction unavailable on the server'
+    else:
+        detail = 'no text in this PDF, so its pages will be sent as images (costs more)'
+    return jsonify({'success': True,
+                    'message': f'"{rulebook_name}" saved for {game_title} — {detail}',
+                    'has_text': bool(rules_text)})
 
 
 @app.route('/delete_rulebook', methods=['POST'])
@@ -755,7 +797,7 @@ def ask_rules():
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT pdf_data, bgg_forum_cache, rulebook_name
+            SELECT pdf_data, bgg_forum_cache, rulebook_name, rules_text
             FROM rulebooks WHERE game_title = %s AND pdf_data IS NOT NULL
             ORDER BY rulebook_name
         """, (game_title,))
@@ -772,23 +814,36 @@ def ask_rules():
         if not api_key:
             return jsonify({'success': False, 'message': 'ANTHROPIC_API_KEY not configured'}), 500
 
-        # PDF blocks with cache_control so follow-up questions reuse the cached context
-        pdf_blocks = [
-            {
-                'type': 'document',
-                'source': {'type': 'base64', 'media_type': 'application/pdf', 'data': r[0]},
-                'cache_control': {'type': 'ephemeral'}
-            }
-            for r in rows
-        ]
+        # A rulebook goes as extracted text where we have it — about a third of
+        # the tokens the page images cost, which is what keeps a game like
+        # Spirit Island under the context limit. Books that are really scanned
+        # images extract nothing, so those still go as pages.
+        book_blocks = []
+        as_images = []
+        for pdf_b64, _bgg, name, text in rows:
+            label = name or 'Rulebook'
+            if text and text.strip():
+                book_blocks.append({'type': 'text',
+                                    'text': f'=== {label} ===\n{text}'})
+            else:
+                book_blocks.append({'type': 'document',
+                                    'source': {'type': 'base64',
+                                               'media_type': 'application/pdf',
+                                               'data': pdf_b64}})
+                as_images.append(label)
 
         history = data.get('history', [])  # [{role, content}] of previous text turns
 
         # First user message always includes PDFs + optional BGG + first question
         first_question = history[0]['content'] if history else question
-        first_content = list(pdf_blocks)
+        first_content = list(book_blocks)
         if bgg_section:
             first_content.append({'type': 'text', 'text': f'BGG Rules Forum Discussions:\n{bgg_section}'})
+        # One breakpoint on the last shared block caches every rulebook above
+        # it. Marking each book separately would exceed the four-breakpoint
+        # limit as soon as a game had five.
+        if first_content:
+            first_content[-1] = dict(first_content[-1], cache_control={'type': 'ephemeral'})
         first_content.append({'type': 'text', 'text': first_question})
 
         messages = [{'role': 'user', 'content': first_content}]
@@ -801,6 +856,8 @@ def ask_rules():
 
         book_names = ', '.join(r[2] or 'Rulebook' for r in rows)
         sources_used = book_names + (' + pasted BGG content' if bgg_section else ' + training knowledge')
+        if as_images:
+            sources_used += f" ({', '.join(as_images)} sent as page images)"
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model='claude-haiku-4-5-20251001',
