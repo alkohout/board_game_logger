@@ -126,7 +126,11 @@
             document.getElementById('new-convo-btn').style.display = '';
             if (data.cost_nzd != null) {
                 const cost = document.getElementById('cost-line');
-                cost.textContent = `Questions asked: ${history.length} | Last cost: NZ$${data.cost_nzd.toFixed(4)}`;
+                const left = data.balance_nzd != null
+                    ? ` | NZ$${data.balance_nzd.toFixed(2)} credit left`
+                    : '';
+                cost.textContent =
+                    `Questions asked: ${history.length} | Last cost: NZ$${data.cost_nzd.toFixed(4)}${left}`;
                 cost.style.display = '';
             }
         }

@@ -968,6 +968,7 @@ again. Do not use this for anything the text can answer.""" if not want_images e
 
         return jsonify({
             'success': True,
+            'balance_nzd': balance_after(),
             'answer': answer_text,
             'books': available,
             'sources': sources_used,
@@ -1613,6 +1614,15 @@ def ai_balance(user_id):
     }
 
 
+def balance_after(user=None):
+    """What this account has left, for showing beside an answer. None if the
+    account is uncapped, so the page can say so rather than print a number."""
+    user = user or current_user()
+    if not user or user.get('is_owner'):
+        return None
+    return ai_balance(user['id'])['available']
+
+
 def ai_spend_blocked():
     """Response to return if this user can't afford a question, else None."""
     user = current_user()
@@ -2041,6 +2051,7 @@ def api_ask_database():
     record_ai_usage('db_query', nzd, usd)
     return jsonify({
         'success': True,
+        'balance_nzd': balance_after(),
         'answer': db_query_text(answer_response),
         'sql': sql,
         'columns': columns,

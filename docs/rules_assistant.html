@@ -329,8 +329,12 @@
                 appendToConversation(question, data.answer, data.sources, data.cost_nzd, data.cost_usd);
                 document.getElementById('question').value = '';
                 document.getElementById('new-convo-btn').style.display = '';
+                const left = data.balance_nzd != null
+                    ? ' | NZ$' + data.balance_nzd.toFixed(2) + ' credit left'
+                    : '';
                 document.getElementById('cost-line').textContent =
-                    'Total turns: ' + (conversationHistory.length / 2) + ' | Last cost: NZ$' + data.cost_nzd.toFixed(4);
+                    'Total turns: ' + (conversationHistory.length / 2) +
+                    ' | Last cost: NZ$' + data.cost_nzd.toFixed(4) + left;
                 document.getElementById('cost-line').style.display = '';
             } else if (data?.needs_images) {
                 // Not an error: the model has told us the text isn't enough.
