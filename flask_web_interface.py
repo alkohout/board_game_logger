@@ -650,6 +650,22 @@ def update():
 
 
 
+def usage_cost_usd(usage, price_in, price_out):
+    """Cost of one call, counting the cached tokens too.
+
+    usage.input_tokens is only the *uncached* part. With prompt caching on the
+    rulebooks — which is the point of it — most of the input arrives as cache
+    writes (1.25x) or cache reads (0.1x), and ignoring those bills a large
+    question as almost free.
+    """
+    written = getattr(usage, 'cache_creation_input_tokens', 0) or 0
+    read = getattr(usage, 'cache_read_input_tokens', 0) or 0
+    return (usage.input_tokens * price_in
+            + written * price_in * 1.25
+            + read * price_in * 0.10
+            + usage.output_tokens * price_out) / 1_000_000
+
+
 RULES_MODEL = 'claude-haiku-4-5'
 RULES_PRICE_IN = 1.00      # USD per million input tokens
 RULES_PRICE_OUT = 5.00
@@ -929,10 +945,7 @@ again. Do not use this for anything the text can answer.""" if not want_images e
             ),
             messages=messages
         )
-        # Haiku pricing: $0.80/MTok input, $4.00/MTok output
-        input_cost  = response.usage.input_tokens  * 0.80 / 1_000_000
-        output_cost = response.usage.output_tokens * 4.00 / 1_000_000
-        cost_usd = input_cost + output_cost
+        cost_usd = usage_cost_usd(response.usage, RULES_PRICE_IN, RULES_PRICE_OUT)
         nzd_rate = float(os.getenv('NZD_RATE', '1.68'))
         cost_nzd = cost_usd * nzd_rate
         record_ai_usage('rules', cost_nzd, cost_usd)
@@ -1898,9 +1911,7 @@ def db_query_run(sql, is_owner=False):
 
 def db_query_cost(*priced):
     """Combined USD/NZD cost. Each argument is (response, usd_in, usd_out) per MTok."""
-    usd = sum(r.usage.input_tokens * price_in / 1_000_000 +
-              r.usage.output_tokens * price_out / 1_000_000
-              for r, price_in, price_out in priced)
+    usd = sum(usage_cost_usd(r.usage, price_in, price_out) for r, price_in, price_out in priced)
     return usd, usd * float(os.getenv('NZD_RATE', '1.68'))
 
 
