@@ -1,3 +1,9 @@
+:root {
+    /* One width for every page, so the shell doesn't resize as you move
+       between tabs. 700px is what the table pages already needed. */
+    --page-width: 700px;
+}
+
 body {
     background-image: url('./SG.webp');
     background-size: cover;
@@ -21,7 +27,7 @@ label { display: block; }
     background: rgba(0,0,0,0.7);
     padding: 20px;
     border-radius: 8px;
-    max-width: 400px;
+    max-width: var(--page-width);
     margin: 20px auto;
     position: relative;
 }

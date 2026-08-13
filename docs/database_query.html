@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Database Query</title>
-    <link rel="stylesheet" href="./styles.css?v=3">
+    <link rel="stylesheet" href="./styles.css?v=4">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -36,12 +36,12 @@
 </head>
 <body>
 
-<div class="form-container" id="tabbar" style="max-width:700px;">
+<div class="form-container" id="tabbar">
     <h1 style="margin:0 0 10px;">Board Game Logger</h1>
     <div id="tabbar-mount"></div>
 </div>
 
-    <div class="form-container" style="max-width:700px;">
+    <div class="form-container">
         <h2>Database Query</h2>
         <p style="color:#ccc; font-size:0.9em;">
             Ask anything about your game log in plain English. Claude writes the SQL, it runs
@@ -70,7 +70,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=3"></script>
+    <script src="./tabs.js?v=4"></script>
     <script>
         requireAuth();
         renderTabs('query');

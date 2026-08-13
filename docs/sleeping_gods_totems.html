@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Sleeping Gods — Totems</title>
-    <link rel="stylesheet" href="./styles.css?v=3">
+    <link rel="stylesheet" href="./styles.css?v=4">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -15,24 +15,24 @@
 </head>
 <body>
 
-<div class="form-container" id="tabbar" style="max-width:750px;">
+<div class="form-container" id="tabbar">
     <h1 style="margin:0 0 10px;">Board Game Logger</h1>
     <div id="tabbar-mount"></div>
 </div>
 
     <button class="btn-back" style="margin:0 0 0 20px;" onclick="window.location.href='./sleeping_gods.html'">← Back to Sleeping Gods</button>
 
-    <div class="form-container" style="max-width:750px;">
+    <div class="form-container">
         <h2>Totems</h2>
         <table><tbody id="totems-body"></tbody></table>
     </div>
 
-    <div class="form-container" style="max-width:750px;">
+    <div class="form-container">
         <h2>Endings</h2>
         <table><tbody id="endings-body"></tbody></table>
     </div>
 
-    <div class="form-container" style="max-width:750px;">
+    <div class="form-container">
         <h2>Unlocked Cards</h2>
         <p>You've uncovered <strong id="totem-count">0</strong> totems and endings. Include ticked Quests below in all future campaigns.</p>
         <table><tbody id="unlocked-body"></tbody></table>
@@ -42,7 +42,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=3"></script>
+    <script src="./tabs.js?v=4"></script>
     <script>
         requireAuth();
         renderTabs('games');
