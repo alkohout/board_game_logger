@@ -1636,6 +1636,9 @@ LOCAL_LLM_URL = os.getenv('LOCAL_LLM_URL')
 LOCAL_LLM_MODEL = os.getenv('LOCAL_LLM_MODEL', 'qwen2.5-coder:14b')
 LOCAL_LLM_FOR = {f.strip() for f in os.getenv('LOCAL_LLM_FOR', '').split(',') if f.strip()}
 LOCAL_LLM_TIMEOUT = int(os.getenv('LOCAL_LLM_TIMEOUT', '300'))
+# On by default: a home machine reboots, sleeps and updates, and a question
+# quietly costing two cents beats the feature being broken until you notice.
+LOCAL_LLM_FALLBACK = os.getenv('LOCAL_LLM_FALLBACK', 'true').lower() != 'false'
 
 
 class ModelReply:
@@ -1658,6 +1661,30 @@ class LocalUsage:
 
 def local_llm_for(feature):
     return bool(LOCAL_LLM_URL) and feature in LOCAL_LLM_FOR
+
+
+def ask_model(feature, system, user, max_tokens, claude_call):
+    """Answer one call, locally if configured, otherwise with Claude.
+
+    A local failure — machine asleep, model still loading, empty reply —
+    falls through to Claude rather than surfacing an error, unless
+    LOCAL_LLM_FALLBACK=false says to fail loudly instead.
+    """
+    if local_llm_for(feature):
+        try:
+            reply = local_llm_chat(system, user, max_tokens)
+            if reply.text:
+                return reply
+            raise ValueError('local model returned nothing')
+        except Exception as e:
+            if not LOCAL_LLM_FALLBACK:
+                raise
+            app.logger.warning('Local model failed (%s) — falling back to Claude: %s',
+                               feature, e)
+            reply = claude_call()
+            reply.provider = 'claude (local unavailable)'
+            return reply
+    return claude_call()
 
 
 def local_llm_chat(system, user, max_tokens):
@@ -2126,17 +2153,17 @@ def api_ask_database():
     )
     sql_user = f'{prior}\nQuestion: {question}'
 
+    def sql_via_claude():
+        response = client.messages.create(
+            model=DB_QUERY_SQL_MODEL, max_tokens=8000,
+            output_config={'effort': DB_QUERY_SQL_EFFORT},
+            system=sql_system,
+            messages=[{'role': 'user', 'content': sql_user}])
+        return ModelReply(db_query_text(response), response.usage, 'claude',
+                          usage_cost_usd(response.usage, *DB_QUERY_SQL_PRICE))
+
     try:
-        if local_llm_for('db_query'):
-            sql_reply = local_llm_chat(sql_system, sql_user, 2000)
-        else:
-            response = client.messages.create(
-                model=DB_QUERY_SQL_MODEL, max_tokens=8000,
-                output_config={'effort': DB_QUERY_SQL_EFFORT},
-                system=sql_system,
-                messages=[{'role': 'user', 'content': sql_user}])
-            sql_reply = ModelReply(db_query_text(response), response.usage, 'claude',
-                                   usage_cost_usd(response.usage, *DB_QUERY_SQL_PRICE))
+        sql_reply = ask_model('db_query', sql_system, sql_user, 2000, sql_via_claude)
     except requests.RequestException as e:
         return jsonify({'success': False,
                         'message': f'Could not reach the local model: {e}'}), 502
@@ -2184,16 +2211,16 @@ def api_ask_database():
     )
     answer_user = f'Question: {question}\n\nSQL:\n{sql}\n\nResults ({len(rows)} rows):\n{table}'
 
+    def answer_via_claude():
+        response = client.messages.create(
+            model=DB_QUERY_WRITEUP_MODEL, max_tokens=2000,
+            system=answer_system,
+            messages=[{'role': 'user', 'content': answer_user}])
+        return ModelReply(db_query_text(response), response.usage, 'claude',
+                          usage_cost_usd(response.usage, *DB_QUERY_WRITEUP_PRICE))
+
     try:
-        if local_llm_for('db_query'):
-            answer_reply = local_llm_chat(answer_system, answer_user, 1000)
-        else:
-            response = client.messages.create(
-                model=DB_QUERY_WRITEUP_MODEL, max_tokens=2000,
-                system=answer_system,
-                messages=[{'role': 'user', 'content': answer_user}])
-            answer_reply = ModelReply(db_query_text(response), response.usage, 'claude',
-                                      usage_cost_usd(response.usage, *DB_QUERY_WRITEUP_PRICE))
+        answer_reply = ask_model('db_query', answer_system, answer_user, 1000, answer_via_claude)
     except (requests.RequestException, anthropic.APIStatusError, anthropic.APIConnectionError):
         # The data is good even if the write-up failed — return it without prose.
         usd, nzd = reply_cost(sql_reply)
