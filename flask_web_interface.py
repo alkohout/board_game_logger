@@ -165,6 +165,45 @@ def owner_only():
         return jsonify({'success': False, 'message': 'Owner only'}), 403
     return None
 
+EXPECTED_COLUMNS = {
+    'users': ('token_version',),
+    'games': ('user_id',),
+    'rulebooks': ('user_id', 'rules_text', 'page_count'),
+    'ai_usage': ('input_tokens', 'cache_read_tokens'),
+    'credit_purchases': ('stripe_session_id',),
+}
+
+
+def check_schema():
+    """Warn loudly at boot if a migration hasn't been run.
+
+    Otherwise the first sign is a request failing after the work was already
+    done — an AI question that cost real money and returned an error.
+    """
+    try:
+        conn = raw_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT table_name, column_name FROM information_schema.columns
+            WHERE table_schema = 'public'
+        """)
+        have = {(t, c) for t, c in cur.fetchall()}
+        cur.close()
+        conn.close()
+    except Exception as e:
+        app.logger.warning('Could not check the schema at startup: %s', e)
+        return
+    missing = [f'{table}.{column}'
+               for table, columns in EXPECTED_COLUMNS.items()
+               for column in columns
+               if (table, column) not in have and any(t == table for t, _ in have)]
+    if missing:
+        app.logger.error('SCHEMA OUT OF DATE — missing %s. Run the migrations in '
+                         'migrations/ before serving traffic.', ', '.join(missing))
+    else:
+        app.logger.info('Schema check passed.')
+
+
 @app.route('/')
 def api_root():
     """This host is the API. The app itself lives on GitHub Pages."""
@@ -1668,16 +1707,25 @@ def record_ai_usage(kind, cost_nzd, cost_usd, tokens=None):
     conn = get_db_connection()
     cur = conn.cursor()
     t = tokens or {}
-    cur.execute("""
-        INSERT INTO ai_usage (user_id, kind, cost_nzd, cost_usd, funded_by,
-                              input_tokens, output_tokens, cache_write_tokens, cache_read_tokens)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, (user['id'], kind, round(cost_nzd, 5), round(cost_usd, 5), funded_by,
-          t.get('input_tokens'), t.get('output_tokens'),
-          t.get('cache_write_tokens'), t.get('cache_read_tokens')))
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        cur.execute("""
+            INSERT INTO ai_usage (user_id, kind, cost_nzd, cost_usd, funded_by,
+                                  input_tokens, output_tokens, cache_write_tokens, cache_read_tokens)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (user['id'], kind, round(cost_nzd, 5), round(cost_usd, 5), funded_by,
+              t.get('input_tokens'), t.get('output_tokens'),
+              t.get('cache_write_tokens'), t.get('cache_read_tokens')))
+        conn.commit()
+    except psycopg2.Error as e:
+        # The model call has already happened and been paid for. Losing the
+        # answer as well would be the worse of the two failures — log the
+        # missed charge and let the caller have what they paid for.
+        conn.rollback()
+        app.logger.error('Could not record %s usage of NZ$%.5f for user %s: %s',
+                         kind, cost_nzd, user['id'], e)
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.route('/api/credit')
@@ -2104,6 +2152,10 @@ def api_recent_plays():
         'bot_score': r[5] or '',
         'notes': r[6] or '',
     } for r in rows])
+
+
+# Runs once per worker at boot, after everything it needs is defined.
+check_schema()
 
 
 if __name__ == '__main__':
