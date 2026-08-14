@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=6">
+    <link rel="stylesheet" href="./styles.css?v=7">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -21,6 +21,33 @@
         .kv dd { margin: 0; overflow-wrap: anywhere; }
         .kv-rule { border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 10px 0; }
         .kv-notes { margin: 10px 0 0; font-size: 0.9em; overflow-wrap: anywhere; }
+
+        /* Game Info: three cards under one search — where you're up to, the
+           record, and the last play as an editable form. */
+        .gi-card {
+            border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
+            padding: 10px 12px; margin: 12px 0;
+        }
+        .gi-card-h {
+            font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.06em;
+            color: #FFD54F; margin-bottom: 8px;
+        }
+        .gi-sub { color: #aaa; font-size: 0.82em; font-weight: normal; margin: 0; }
+        .gi-grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; }
+        .gi-grid dt { color: #aaa; font-size: 0.85em; white-space: nowrap; }
+        .gi-grid dd { margin: 0; overflow-wrap: anywhere; }
+        .gi-won  { color: #90EE90; }
+        .gi-lost { color: #FF8A80; }
+        /* The edit form: labels stay narrow so the inputs get the width. */
+        .gi-field { margin-bottom: 8px; }
+        .gi-field label {
+            display: block; color: #aaa; font-size: 0.8em; margin: 0 0 2px;
+        }
+        .gi-field input, .gi-field textarea, .gi-field select { margin: 0; }
+        .gi-next {
+            margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid #FFD54F;
+            background: rgba(255,213,79,0.07); font-size: 0.9em; overflow-wrap: anywhere;
+        }
 
         /* Score tracker — a sheet you fill in at the table, so it has to work
            one-handed on a phone. 16px inputs stop iOS zooming on focus. */
@@ -140,31 +167,41 @@
 <div class="tab-panel" id="games-panel">
 <!-- Search -->
 <div class="form-container">
-    <h2>Extra Game Info</h2>
+    <h2>Game Info</h2>
     <label>Game Title:</label>
     <div style="position:relative;">
-        <input type="text" id="search_title" autocomplete="off">
+        <input type="text" id="search_title" autocomplete="off"
+               placeholder="Type a game and press Enter">
         <div id="search_suggestions" class="autocomplete-suggestions"></div>
     </div>
-    <button id="search-btn">Search Last Played</button>
-    <button id="search-nonempty-btn">Latest Non-empty Entry</button>
-    <div id="search-result" style="margin-top:10px;"></div>
-    <div id="search-nonempty-result" style="margin-top:10px;"></div>
+    <button id="search-btn">Look Up</button>
+    <p id="search-status" class="status-err" style="display:none;"></p>
 
-    <br>
-    <label>Edit Most Recent Note:</label>
-    <div style="position:relative;">
-        <input type="text" id="edit_note_search" autocomplete="off">
-        <div id="edit_suggestions" class="autocomplete-suggestions"></div>
-    </div>
-    <button id="edit-fetch-btn">Load Note</button>
-    <div id="edit-note-area" style="display:none; margin-top:10px;">
-        <textarea id="edit-note-input" rows="4"></textarea>
-        <button id="save-note-btn">Save Note</button>
-        <p id="save-status" class="status-ok" style="display:none;"></p>
-    </div>
+    <div id="game-info" style="display:none;">
+        <h3 id="gi-title" style="margin:16px 0 2px;"></h3>
+        <p id="gi-rank" class="gi-sub"></p>
 
-    <br>
+        <!-- Where you're up to: pulled from the most recent play that actually
+             recorded something, which is usually a play or two back. -->
+        <div id="gi-progress" class="gi-card" style="display:none;">
+            <div class="gi-card-h">Where you're up to</div>
+            <div id="gi-progress-body"></div>
+        </div>
+
+        <div class="gi-card">
+            <div class="gi-card-h">Record</div>
+            <div id="gi-stats"></div>
+        </div>
+
+        <!-- The last play, editable in place: this is where a mistyped result
+             or a missing level gets fixed. -->
+        <div class="gi-card">
+            <div class="gi-card-h">Last play <span id="gi-when" class="gi-sub"></span></div>
+            <div id="gi-edit"></div>
+            <button id="gi-save">Save Changes</button>
+            <p id="gi-save-status" class="status-ok" style="display:none;"></p>
+        </div>
+    </div>
 </div>
 
 
@@ -250,7 +287,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=6"></script>
+<script src="./tabs.js?v=7"></script>
 <script>
 requireAuth();
 
@@ -405,8 +442,8 @@ loadRecentPlays();
 
 // Autocompletes
 setupAutocomplete('game_title', 'add_suggestions');
-setupAutocomplete('search_title', 'search_suggestions');
-setupAutocomplete('edit_note_search', 'edit_suggestions');
+// Picking a title from the dropdown looks the game up straight away.
+setupAutocomplete('search_title', 'search_suggestions', () => lookUpGame());
 setupAutocomplete('selector_game_title', 'selector_suggestions');
 
 // Spirit Island fields. Fetched once, the first time a Spirit Island title is
@@ -484,56 +521,166 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     }
 });
 
-// Search last played. The API suffixes the latest-detailed-entry fields
-// (result_nonempty, notes_nonempty, ...), so suffix — not prefix.
-// Label-and-value rather than two five-column tables: those needed about
-// 500px and the container is 400, so on a phone the right-hand columns fell
-// off the edge. This fits any width and reads the same on a desktop.
-function renderGameRow(data, suffix) {
-    if (!data?.date_played) return '<p>No record found.</p>';
-    const date = data['date_played' + suffix];
-    if (!date) return '<p>No entry with any details recorded yet.</p>';
-    const f = key => data[key + suffix] || '';
-    const esc = v => String(v ?? '')
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// ---- Game Info -----------------------------------------------------------
+// One search, three cards: where you're up to, the record, and the last play
+// as a form you can correct in place. Label-above-value rather than wide
+// tables — the container is 400px and five columns fell off a phone.
 
-    // The adversary's dial belongs with its name, not on a line of its own.
-    const adversary = f('adversary')
-        ? f('adversary') + (f('adversary_level') ? ` (level ${f('adversary_level')})` : '')
-        : '';
+let giPlay = null;                       // the play currently being edited
 
-    // Blank fields are dropped: an empty "Bot score" row is just noise, and
-    // the Spirit Island rows stay out of the way of every other game.
-    const play = [['Date', date], ['Result', f('result')],
-                  ['Spirit', f('spirit')], ['Adversary', adversary],
-                  ['Scenario', f('scenario')], ['Level', f('level')],
-                  ['My score', f('my_score')], ['Bot score', f('bot_score')]]
-                 .filter(([, v]) => v !== '' && v != null);
-    const counts = [['Total plays', data.total_times_played],
-                    ['This week', data.played_this_week],
-                    ['This month', data.played_this_month],
-                    ['This year', data.played_this_year],
-                    ['Ranking', data.ranking]];
-    const list = pairs => '<dl class="kv">' + pairs.map(([k, v]) =>
-        `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('') + '</dl>';
+const giDate = iso => {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined,
+        { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+};
 
-    const notes = f('notes');
-    return list(play) + '<hr class="kv-rule">' + list(counts) +
-           (notes ? `<p class="kv-notes"><strong>Notes:</strong> ${esc(notes)}</p>` : '');
+const giResultClass = r => /won/i.test(r || '') ? 'gi-won'
+                         : /lost/i.test(r || '') ? 'gi-lost' : '';
+
+function giPairs(pairs) {
+    const rows = pairs.filter(([, v]) => v !== '' && v != null && v !== undefined);
+    if (!rows.length) return '';
+    return '<dl class="gi-grid">' + rows.map(([k, v, cls]) =>
+        `<dt>${escapeHtml(k)}</dt><dd class="${cls || ''}">${escapeHtml(v)}</dd>`
+    ).join('') + '</dl>';
 }
 
-document.getElementById('search-btn').addEventListener('click', async () => {
+// A play's Spirit Island detail, only when it has any.
+function giSpiritIsland(p) {
+    const adv = p.adversary
+        ? p.adversary + (p.adversary_level ? ` (level ${p.adversary_level})` : '') : '';
+    return [['Spirit', p.spirit], ['Adversary', adv], ['Scenario', p.scenario]];
+}
+
+function renderProgress(p) {
+    const box = document.getElementById('gi-progress');
+    if (!p) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    document.getElementById('gi-progress-body').innerHTML =
+        giPairs([['Date', giDate(p.date_played)],
+                 ['Result', p.result, giResultClass(p.result)],
+                 ...giSpiritIsland(p),
+                 ['Level', p.level],
+                 ['My score', p.my_score], ['Bot score', p.bot_score]]) +
+        // The note is the point of this card — it's where "try level 2 next"
+        // was written down.
+        (p.notes ? `<div class="gi-next">${escapeHtml(p.notes)}</div>` : '');
+}
+
+function renderStats(s) {
+    const decided = s.won + s.lost;
+    const rate = decided ? ` (${Math.round(s.won / decided * 100)}%)` : '';
+    document.getElementById('gi-stats').innerHTML = giPairs([
+        ['Won', decided ? `${s.won}${rate}` : s.won || 0, 'gi-won'],
+        ['Lost', s.lost || 0, 'gi-lost'],
+        // Most plays record no result, so say so rather than implying losses.
+        ['No result', s.total_plays - decided],
+        ['Total plays', s.total_plays],
+        ['This week', s.this_week], ['This month', s.this_month],
+        ['This year', s.this_year],
+        ['First played', giDate(s.first_played)],
+        ['Last played', giDate(s.last_played)],
+    ]);
+}
+
+// The last play as an editable form. Spirit Island rows appear only for a
+// Spirit Island game, and are populated from the same lists as the log form.
+async function renderEdit(p, title) {
+    giPlay = p;
+    const field = (id, label, value, rows) => `
+        <div class="gi-field"><label for="gi-${id}">${label}</label>
+        ${rows ? `<textarea id="gi-${id}" rows="${rows}">${escapeHtml(value || '')}</textarea>`
+               : `<input type="text" id="gi-${id}" value="${escapeHtml(value || '')}">`}</div>`;
+
+    let si = '';
+    if (isSpiritIsland(title)) {
+        await fillSpiritIsland();
+        const opts = (names, chosen) => '<option value="">—</option>' + names.map(n =>
+            `<option value="${escapeHtml(n)}"${n === chosen ? ' selected' : ''}>${escapeHtml(n)}</option>`
+        ).join('');
+        const src = id => [...document.getElementById(id).options].map(o => o.value).filter(Boolean);
+        si = `<div class="gi-field"><label>Spirit</label>
+                <select id="gi-spirit">${opts(src('spirit'), p.spirit)}</select></div>
+              <div class="gi-field"><label>Adversary</label>
+                <div style="display:flex; gap:8px;">
+                  <select id="gi-adversary" style="flex:1; min-width:0;">${opts(src('adversary'), p.adversary)}</select>
+                  <select id="gi-adversary_level" style="width:5.5em;">
+                    <option value="">Lvl</option>${[1,2,3,4,5,6].map(n =>
+                      `<option value="${n}"${n === p.adversary_level ? ' selected' : ''}>${n}</option>`).join('')}
+                  </select></div></div>
+              <div class="gi-field"><label>Scenario</label>
+                <select id="gi-scenario">${opts(src('scenario'), p.scenario)}</select></div>`;
+    }
+
+    document.getElementById('gi-edit').innerHTML =
+        `<div class="gi-field"><label for="gi-date_played">Date played</label>
+         <input type="date" id="gi-date_played" value="${escapeHtml(p.date_played || '')}"></div>` +
+        field('result', 'Result', p.result) + si +
+        field('level', 'Level', p.level, 2) +
+        field('my_score', 'My score', p.my_score) +
+        field('bot_score', 'Bot score', p.bot_score) +
+        field('notes', 'Notes', p.notes, 4);
+}
+
+async function lookUpGame() {
     const term = document.getElementById('search_title').value.trim();
+    const status = document.getElementById('search-status');
+    const panel = document.getElementById('game-info');
     if (!term) return;
-    const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
-    document.getElementById('search-result').innerHTML = renderGameRow(data, '');
+    status.style.display = 'none';
+    const data = await apiGet('/api/game_info?term=' + encodeURIComponent(term));
+    if (!data) return;
+    if (!data.success) {
+        panel.style.display = 'none';
+        status.textContent = data.message || 'Not found.';
+        status.style.display = '';
+        return;
+    }
+    document.getElementById('gi-title').textContent = data.title;
+    const s = data.stats;
+    document.getElementById('gi-rank').textContent = s.ranking
+        ? `#${s.ranking} most played of ${s.of_games} games` : '';
+    renderProgress(data.latest_detailed);
+    renderStats(s);
+    document.getElementById('gi-when').textContent = giDate(data.last.date_played);
+    await renderEdit(data.last, data.title);
+    document.getElementById('gi-save-status').style.display = 'none';
+    panel.style.display = '';
+}
+
+document.getElementById('search-btn').addEventListener('click', lookUpGame);
+document.getElementById('search_title').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); lookUpGame(); }
 });
 
-document.getElementById('search-nonempty-btn').addEventListener('click', async () => {
-    const term = document.getElementById('search_title').value.trim();
-    if (!term) return;
-    const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
-    document.getElementById('search-nonempty-result').innerHTML = renderGameRow(data, '_nonempty');
+document.getElementById('gi-save').addEventListener('click', async () => {
+    if (!giPlay) return;
+    const btn = document.getElementById('gi-save');
+    const status = document.getElementById('gi-save-status');
+    const val = id => document.getElementById('gi-' + id)?.value ?? '';
+    btn.disabled = true;
+    const res = await apiPost('/api/update_play', {
+        id: giPlay.id,
+        date_played: val('date_played'), result: val('result'), level: val('level'),
+        my_score: val('my_score'), bot_score: val('bot_score'), notes: val('notes'),
+        spirit: val('spirit'), adversary: val('adversary'),
+        adversary_level: val('adversary_level'), scenario: val('scenario'),
+    });
+    btn.disabled = false;
+    status.style.display = '';
+    if (res?.success) {
+        status.textContent = 'Saved!';
+        status.className = 'status-ok';
+        // The edit may change the record or the date order, so re-read rather
+        // than leaving the cards showing what they showed before the save.
+        lookUpGame();
+        loadStats();
+        loadRecentPlays();
+    } else {
+        status.textContent = 'Save failed: ' + (res?.message || 'unknown');
+        status.className = 'status-err';
+    }
 });
 
 // Change password
@@ -714,30 +861,8 @@ document.getElementById('clear-scores-btn').addEventListener('click', () => {
 
 renderSheet();
 
-// Edit note
-document.getElementById('edit-fetch-btn').addEventListener('click', async () => {
-    const term = document.getElementById('edit_note_search').value.trim();
-    if (!term) return;
-    const data = await apiGet('/search_last_played?term=' + encodeURIComponent(term));
-    if (data?.date_played) {
-        document.getElementById('edit-note-input').value = data.notes || '';
-        document.getElementById('edit-note-area').style.display = '';
-        document.getElementById('edit-note-area').dataset.gameTitle = term;
-    }
-});
-
-document.getElementById('save-note-btn').addEventListener('click', async () => {
-    const gameTitle = document.getElementById('edit-note-area').dataset.gameTitle;
-    const note = document.getElementById('edit-note-input').value;
-    const status = document.getElementById('save-status');
-    const data = await apiPost('/update_note', { game_title: gameTitle, note });
-    if (data?.success) {
-        status.textContent = 'Saved!'; status.className = 'status-ok'; status.style.display = '';
-        setTimeout(() => status.style.display = 'none', 3000);
-    } else {
-        status.textContent = 'Save failed'; status.className = 'status-err'; status.style.display = '';
-    }
-});
+// The separate "Edit Most Recent Note" box is gone: the note is now one of
+// the fields in the Last play card, edited with everything else around it.
 
 // Selector — the pool lives in this browser. The API kept it in process
 // memory, which the two gunicorn workers don't share, so choices appeared

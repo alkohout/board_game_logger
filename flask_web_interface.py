@@ -1491,21 +1491,7 @@ def api_dashboard():
 @app.route('/api/add_game', methods=['POST'])
 def api_add_game():
     data = request.get_json() or {}
-
-    def picked(field, allowed):
-        """Only store a name we know, so the stats page can count on it."""
-        value = (data.get(field) or '').strip()
-        return next((n for _, n in allowed if n.lower() == value.lower()), None)
-
-    level = data.get('adversary_level')
-    try:
-        level = int(level) if str(level or '').strip() else None
-    except (TypeError, ValueError):
-        level = None
-    if level is not None and not 1 <= level <= 6:
-        level = None
-
-    adversary = picked('adversary', SPIRIT_ISLAND_ADVERSARIES)
+    spirit, adversary, level, scenario = spirit_island_fields(data)
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -1514,10 +1500,7 @@ def api_add_game():
             " spirit, adversary, adversary_level, scenario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
-             picked('spirit', SPIRIT_ISLAND_SPIRITS), adversary,
-             # A level with no adversary is meaningless and would skew "best beaten".
-             level if adversary else None,
-             picked('scenario', SPIRIT_ISLAND_SCENARIOS))
+             spirit, adversary, level, scenario)
         )
         conn.commit()
         cur.close()
@@ -1741,6 +1724,171 @@ def spirit_island_group(entries, plays, field, by_spirit=False):
             groups.append({'product': product, 'items': []})
         groups[-1]['items'].append(item)
     return groups
+
+
+def spirit_island_fields(data):
+    """Validate the Spirit Island pickers off a request body.
+
+    Shared by logging and editing so the two can't drift: only names from the
+    official lists are stored, which is what lets the stats page count on them.
+    """
+    def picked(field, allowed):
+        value = (data.get(field) or '').strip()
+        return next((n for _, n in allowed if n.lower() == value.lower()), None)
+
+    level = data.get('adversary_level')
+    try:
+        level = int(level) if str(level or '').strip() else None
+    except (TypeError, ValueError):
+        level = None
+    if level is not None and not 1 <= level <= 6:
+        level = None
+
+    adversary = picked('adversary', SPIRIT_ISLAND_ADVERSARIES)
+    return (picked('spirit', SPIRIT_ISLAND_SPIRITS),
+            adversary,
+            # A level with no adversary is meaningless and would skew "best beaten".
+            level if adversary else None,
+            picked('scenario', SPIRIT_ISLAND_SCENARIOS))
+
+
+PLAY_COLUMNS = ('id', 'date_played', 'game_title', 'result', 'level', 'my_score',
+                'bot_score', 'notes', 'spirit', 'adversary', 'adversary_level',
+                'scenario')
+
+
+def play_row(row):
+    play = dict(zip(PLAY_COLUMNS, row))
+    play['date_played'] = play['date_played'].isoformat() if play['date_played'] else None
+    return play
+
+
+@app.route('/api/game_info')
+def api_game_info():
+    """Everything the Games tab shows about one game.
+
+    The search term is resolved to a single real title first. The old endpoint
+    counted every title matching the term but looked up the ranking under the
+    term itself, so searching "spirit" ranked nothing and counted several
+    different games together.
+    """
+    term = (request.args.get('term') or '').strip()
+    if not term:
+        return jsonify({'success': False, 'message': 'No game given.'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cols = ', '.join(PLAY_COLUMNS)
+
+    # Most recently played wins; id breaks ties, so a game logged twice on one
+    # date resolves to the row entered last rather than an arbitrary one.
+    cur.execute(f"""SELECT {cols} FROM games WHERE game_title ILIKE %s
+                    ORDER BY date_played DESC, id DESC LIMIT 1""", (f'%{term}%',))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        return jsonify({'success': False, 'message': f'No plays found for "{term}".'}), 404
+    last = play_row(row)
+    title = last['game_title']
+
+    # The most recent play that recorded anything — where the "what to try
+    # next" note lives, which is usually a play or two back.
+    cur.execute(f"""
+        SELECT {cols} FROM games
+        WHERE game_title = %s
+          AND ( (notes  IS NOT NULL AND btrim(notes)  NOT IN ('', 'null')) OR
+                (result IS NOT NULL AND btrim(result) NOT IN ('', 'null')) OR
+                spirit IS NOT NULL OR adversary IS NOT NULL OR scenario IS NOT NULL )
+        ORDER BY date_played DESC, id DESC LIMIT 1
+    """, (title,))
+    row = cur.fetchone()
+    detailed = play_row(row) if row else None
+
+    today = today_local()
+    cur.execute("""
+        SELECT count(*),
+               count(*) FILTER (WHERE result ILIKE '%%won%%'),
+               count(*) FILTER (WHERE result ILIKE '%%lost%%'),
+               count(*) FILTER (WHERE date_played >= %s),
+               count(*) FILTER (WHERE date_played >= %s),
+               count(*) FILTER (WHERE date_played >= %s),
+               min(date_played), max(date_played)
+        FROM games WHERE game_title = %s
+    """, (today - timedelta(days=today.weekday()), today.replace(day=1),
+          today.replace(month=1, day=1), title))
+    (total, won, lost, this_week, this_month, this_year, first, latest) = cur.fetchone()
+
+    # Rank by play count across every game, then read this title's place off it.
+    cur.execute("""
+        SELECT rank FROM (
+            SELECT game_title, RANK() OVER (ORDER BY count(*) DESC) AS rank
+            FROM games GROUP BY game_title
+        ) ranked WHERE game_title = %s
+    """, (title,))
+    row = cur.fetchone()
+    ranking = row[0] if row else None
+    cur.execute("SELECT count(DISTINCT game_title) FROM games")
+    of_games = cur.fetchone()[0]
+
+    cur.close()
+    conn.close()
+    return jsonify({
+        'success': True,
+        'title': title,
+        'last': last,
+        'latest_detailed': detailed,
+        'stats': {
+            'total_plays': total, 'won': won, 'lost': lost,
+            'this_week': this_week, 'this_month': this_month, 'this_year': this_year,
+            'first_played': first.isoformat() if first else None,
+            'last_played': latest.isoformat() if latest else None,
+            'ranking': ranking, 'of_games': of_games,
+        },
+    })
+
+
+@app.route('/api/update_play', methods=['POST'])
+def api_update_play():
+    """Correct a play that was logged wrong.
+
+    Targets one row by id rather than "the most recent play of this title",
+    which guessed at the row whenever a game was logged twice on a date.
+    Row-level security is what stops an id belonging to someone else being
+    edited — the UPDATE simply matches nothing.
+    """
+    data = request.get_json() or {}
+    try:
+        play_id = int(data.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Which play?'}), 400
+    if not (data.get('date_played') or '').strip():
+        return jsonify({'success': False, 'message': 'A date is required.'}), 400
+
+    spirit, adversary, level, scenario = spirit_island_fields(data)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            UPDATE games SET date_played = %s, result = %s, level = %s,
+                             my_score = %s, bot_score = %s, notes = %s,
+                             spirit = %s, adversary = %s, adversary_level = %s,
+                             scenario = %s
+            WHERE id = %s
+        """, (data.get('date_played'), data.get('result', ''), data.get('level', ''),
+              data.get('my_score', ''), data.get('bot_score', ''), data.get('notes', ''),
+              spirit, adversary, level, scenario, play_id))
+        if cur.rowcount != 1:
+            conn.rollback()
+            cur.close(); conn.close()
+            return jsonify({'success': False, 'message': 'No such play.'}), 404
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close(); conn.close()
+        return jsonify({'success': False, 'message': str(e)}), 500
+    cur.close()
+    conn.close()
+    return jsonify({'success': True})
 
 
 @app.route('/api/spirit_island_options')
