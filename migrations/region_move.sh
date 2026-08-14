@@ -48,9 +48,10 @@ case "${1:-}" in
 
 dump)
     echo "Dumping the old project..."
-    # Custom format so the restore can be ordered and repeated.
-    pg_dump --format=custom --no-privileges=false --verbose \
-            --file="$DUMP" "$OLD_URL" 2>&1 | tail -5
+    # Custom format so the restore can be ordered and repeated. Privileges and
+    # ownership are included on purpose — the GRANTs to bgl_app and the
+    # ownership of the SECURITY DEFINER functions are load-bearing here.
+    pg_dump --format=custom --verbose --file="$DUMP" "$OLD_URL" 2>&1 | tail -5
     chmod 600 "$DUMP"
     echo "Wrote $DUMP ($(du -h "$DUMP" | cut -f1))"
     ;;
