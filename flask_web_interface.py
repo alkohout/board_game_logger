@@ -3,6 +3,7 @@ from flask_cors import CORS
 import psycopg2
 import psycopg2.pool
 import threading
+import time
 import os
 import random
 import re
@@ -273,13 +274,19 @@ def _pool():
     return _POOL
 
 
+# Round trips are the unit of cost here: ~205ms each to us-east-1, so the
+# tuning is about doing fewer of them, not about doing less work.
+POOL_IDLE_CHECK_SECONDS = float(os.getenv('DB_POOL_IDLE_CHECK', '20'))
+
+
 class PooledConnection:
     """A pooled connection that goes back to the pool when closed.
 
     Every route already calls conn.close(), so returning rather than closing
-    keeps the call sites unchanged. Anything left set on the session is cleared
-    on the way back — a reused connection must never carry one caller's
-    app.user_id into the next caller's request.
+    keeps the call sites unchanged. Only a rollback happens on the way back —
+    one round trip. Clearing app.user_id here would be a second, and is not
+    needed: get_db_connection sets it on every checkout, to '' when there is
+    no caller, so nothing inherits the previous request's scope.
     """
 
     def __init__(self, pool, conn):
@@ -291,22 +298,57 @@ class PooledConnection:
         return getattr(self._conn, name)
 
     def close(self):
+        """A no-op: routes close their connection, but the request isn't over.
+
+        Honouring it would hand the connection back after the first route that
+        finished with it, and the next get_db_connection in the same request
+        would check out another — the two-connections-per-request problem this
+        exists to avoid. teardown_request does the real release.
+        """
+
+    def _release(self):
         if self._closed:
             return
         self._closed = True
         try:
             self._conn.rollback()
-            cur = self._conn.cursor()
-            cur.execute("SELECT set_config('app.user_id', '', false)")
-            cur.close()
-            self._conn.commit()
             self._pool.putconn(self._conn)
+            _POOL_IDLE_SINCE[id(self._conn)] = time.time()
         except Exception:
             # A connection that can't be cleaned up is not safe to hand on.
             try:
                 self._pool.putconn(self._conn, close=True)
             except Exception:
                 pass
+
+
+_POOL_IDLE_SINCE = {}
+
+
+def _checkout():
+    """A live pooled connection, with as few round trips as possible."""
+    pool = _pool()
+    for _ in range(POOL_MAX + 1):
+        conn = pool.getconn()
+        if conn.closed:
+            pool.putconn(conn, close=True)
+            continue
+        # Only probe a connection that has been sitting long enough to have
+        # been dropped. Probing every checkout cost two round trips on the
+        # hot path to catch something that almost never happens.
+        idle_for = time.time() - _POOL_IDLE_SINCE.get(id(conn), 0)
+        if idle_for > POOL_IDLE_CHECK_SECONDS:
+            try:
+                cur = conn.cursor()
+                cur.execute('SELECT 1')
+                cur.close()
+                conn.rollback()
+            except Exception:
+                pool.putconn(conn, close=True)
+                continue
+        return PooledConnection(pool, conn)
+    args, kwargs = _connection_settings()
+    return psycopg2.connect(*args, **kwargs)
 
 
 def raw_db_connection():
@@ -317,26 +359,22 @@ def raw_db_connection():
         args, kwargs = _connection_settings()
         return psycopg2.connect(*args, **kwargs)
 
-    pool = _pool()
-    for _ in range(POOL_MAX + 1):
-        conn = pool.getconn()
-        if conn.closed:
-            pool.putconn(conn, close=True)
-            continue
-        try:
-            # Cheap liveness check: a pooled connection may have been dropped
-            # while idle, and we would rather find out here than mid-route.
-            cur = conn.cursor()
-            cur.execute('SELECT 1')
-            cur.close()
-            conn.rollback()
-        except Exception:
-            pool.putconn(conn, close=True)
-            continue
-        return PooledConnection(pool, conn)
-    # Pool exhausted or every connection dead — fall back to a fresh one.
-    args, kwargs = _connection_settings()
-    return psycopg2.connect(*args, **kwargs)
+    # One connection for the whole request. Reading the caller's token and then
+    # running the route used to open two, and at ~1.3s to establish and several
+    # round trips to use, that was most of the request.
+    conn = getattr(g, '_db', None)
+    if conn is None or conn._closed:
+        conn = _checkout()
+        g._db = conn
+    return conn
+
+
+@app.teardown_request
+def _release_db(exc=None):
+    conn = getattr(g, '_db', None)
+    if conn is not None:
+        g._db = None
+        conn._release()
 
 
 def get_db_connection():
@@ -344,16 +382,46 @@ def get_db_connection():
 
     Stamps the caller's id onto the session so the row-level security policies
     can filter, and so INSERTs pick up the right owner from the column default.
-    Every route opens and closes its own connection, so a session-level SET is
-    scoped to this request — SET LOCAL would be undone by the first commit.
+    SET LOCAL would be undone by the first commit, so this is session-level and
+    re-stamped on every checkout.
     """
     conn = raw_db_connection()
     user = getattr(g, 'user', None) if has_request_context() else None
+    wanted = str(user['id']) if user else ''
+
     # Always set it, including to '' when there is no caller. With a fresh
     # connection per request an unset value meant "match nothing", which was
     # safe by accident; on a pooled connection it would mean "whatever the
     # previous request left there". NULLIF('','') is NULL, so the policy still
     # matches nothing — but now it says so explicitly.
+    #
+    # Once per request, not once per call: routes call this repeatedly and each
+    # stamp is a round trip to a database three time zones away.
+    if getattr(conn, '_scope', None) != wanted:
+        was_autocommit = conn.autocommit
+        # Autocommit is a client-side flag, so this replaces the separate
+        # COMMIT round trip the stamp used to need with nothing at all.
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SELECT set_config('app.user_id', %s, false)", (wanted,))
+        cur.close()
+        conn.autocommit = was_autocommit
+        try:
+            conn._scope = wanted
+        except AttributeError:
+            pass
+    return conn
+
+
+def private_db_connection():
+    """A connection outside the request pool, stamped with the caller.
+
+    For work that changes session state — read-only, a different role — which
+    must not follow a connection back into the pool.
+    """
+    args, kwargs = _connection_settings()
+    conn = psycopg2.connect(*args, **kwargs)
+    user = getattr(g, 'user', None) if has_request_context() else None
     cur = conn.cursor()
     cur.execute("SELECT set_config('app.user_id', %s, false)",
                 (str(user['id']) if user else '',))
@@ -2673,8 +2741,15 @@ def db_query_check(sql):
 
 
 def db_query_run(sql, is_owner=False):
-    """Run the query in a read-only transaction. Returns (columns, rows, truncated)."""
-    conn = get_db_connection()
+    """Run the query in a read-only transaction. Returns (columns, rows, truncated).
+
+    On a connection of its own, deliberately. set_session can't be called with a
+    transaction already open, which the shared request connection usually has —
+    and a pooled connection handed back still marked read-only would break the
+    next writer to borrow it. The extra connection costs about a second; an AI
+    question already costs several.
+    """
+    conn = private_db_connection()
     try:
         # Read-only is enforced by Postgres, not by our own parsing of the SQL.
         conn.set_session(readonly=True, autocommit=False)
