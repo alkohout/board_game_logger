@@ -1607,20 +1607,61 @@ SPIRIT_ISLAND_TITLE = '%spirit island%'
 ADVERSARY_LEVEL_RE = re.compile(r'(?:level|lvl|l)\s*([1-6])\b', re.I)
 
 
-def spirit_island_group(entries, plays, field):
-    """Won/lost per named thing, grouped by the product it came in."""
+def _tally(rows):
+    return {
+        'won': sum(1 for p in rows if 'won' in (p['result'] or '').lower()),
+        'lost': sum(1 for p in rows if 'lost' in (p['result'] or '').lower()),
+        # plays counts every logged game, including the many with no result
+        # recorded — otherwise a spirit played six times looks unplayed.
+        'plays': len(rows),
+    }
+
+
+def _best_level(rows):
+    """Highest adversary level actually beaten in these plays."""
+    levels = [p['adversary_level'] for p in rows
+              if p['adversary_level'] and 'won' in (p['result'] or '').lower()]
+    return max(levels) if levels else None
+
+
+def spirit_island_group(entries, plays, field, by_spirit=False):
+    """Won/lost per named thing, grouped by the product it came in.
+
+    by_spirit adds the spirits used against each one. The pairing is already on
+    the row — a play records its spirit and its adversary together — it just
+    isn't visible in a flat tally.
+    """
     groups = []
     for product, name in entries:
         key = name.lower()
         rows = [p for p in plays if (p[field] or '').lower() == key]
-        won = sum(1 for p in rows if 'won' in (p['result'] or '').lower())
-        lost = sum(1 for p in rows if 'lost' in (p['result'] or '').lower())
+        item = {'name': name, **_tally(rows)}
+
+        if field == 'adversary':
+            item['best_level'] = _best_level(rows)
+
+        if by_spirit:
+            seen = []
+            for spirit in dict.fromkeys(p['spirit'] for p in rows):
+                against = [p for p in rows if p['spirit'] == spirit]
+                entry = {
+                    # Plays from before the pickers existed often name no
+                    # spirit. Say so rather than dropping them, or the
+                    # sub-rows won't add up to the row above them.
+                    'name': spirit or 'not recorded',
+                    'recorded': spirit is not None,
+                    **_tally(against),
+                }
+                if field == 'adversary':
+                    entry['best_level'] = _best_level(against)
+                seen.append(entry)
+            # Most-played first; the unrecorded bucket always sits last.
+            item['spirits'] = sorted(
+                seen, key=lambda s: (s['recorded'] is False, -s['plays'], s['name']))
+
         if not groups or groups[-1]['product'] != product:
             groups.append({'product': product, 'items': []})
-        # plays counts every logged game, including the many with no result
-        # recorded — otherwise a spirit played six times looks unplayed.
-        groups[-1]['items'].append(
-            {'name': name, 'won': won, 'lost': lost, 'plays': len(rows)})
+        groups[-1]['items'].append(item)
     return groups
 
 
@@ -1647,24 +1688,14 @@ def api_spirit_island_stats():
     cur.close()
     conn.close()
 
-    # How far up the dials each adversary has been beaten — the number people
-    # actually care about, and invisible in a plain won/lost tally.
-    best = {}
-    for p in plays:
-        if p['adversary'] and p['adversary_level'] and 'won' in (p['result'] or '').lower():
-            name = p['adversary']
-            best[name] = max(best.get(name, 0), p['adversary_level'])
-    adversaries = spirit_island_group(SPIRIT_ISLAND_ADVERSARIES, plays, 'adversary')
-    for group in adversaries:
-        for item in group['items']:
-            item['best_level'] = best.get(item['name'])
-
     recorded = sum(1 for p in plays
                    if p['spirit'] or p['adversary'] or p['scenario'])
     return jsonify({
         'spirits': spirit_island_group(SPIRIT_ISLAND_SPIRITS, plays, 'spirit'),
-        'adversaries': adversaries,
-        'scenarios': spirit_island_group(SPIRIT_ISLAND_SCENARIOS, plays, 'scenario'),
+        'adversaries': spirit_island_group(
+            SPIRIT_ISLAND_ADVERSARIES, plays, 'adversary', by_spirit=True),
+        'scenarios': spirit_island_group(
+            SPIRIT_ISLAND_SCENARIOS, plays, 'scenario', by_spirit=True),
         'total_plays': len(plays),
         # Plays with nothing recorded aren't a bug to hide — the page says so,
         # otherwise the totals look wrong against the Games tab.

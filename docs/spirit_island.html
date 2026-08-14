@@ -23,6 +23,16 @@
         .unplayed td { color: #777; }
         .totals td { border-top: 2px solid rgba(255,255,255,0.3); font-weight: bold; padding-top: 10px; }
         .best { color: #FFD54F; font-size: 0.8em; margin-left: 6px; white-space: nowrap; }
+        /* Spirit used against the adversary/scenario above. Indented and
+           quieter so the tally you scan for stays the outer row. */
+        .sub td:first-child {
+            padding-left: 26px; font-size: 0.85em; color: #bbb;
+        }
+        .sub td:first-child::before { content: '↳ '; color: #666; }
+        .sub td { border-bottom: none; }
+        .sub.unnamed td:first-child { color: #777; font-style: italic; }
+        .with { color: #bbb; font-size: 0.82em; margin-left: 6px; }
+        .with::before { content: '· '; color: #666; }
         .caption { color: #ccc; font-size: 0.9em; margin: 0 0 4px; }
         .aside { color: #888; font-size: 0.8em; margin: 10px 0 0; }
     </style>
@@ -58,17 +68,38 @@
         // six times from reading as unplayed.
         function section(title, groups, opts = {}) {
             let won = 0, lost = 0, played = 0;
+
+            // Which spirit was used, indented under the thing it was used
+            // against. Only worth drawing when there's more than one — a lone
+            // sub-row just repeats the row above it.
+            const spiritRows = (it) => (it.spirits || []).length > 1
+                ? it.spirits.map(s => {
+                    const best = opts.showBest && s.best_level
+                        ? `<span class="best">L${s.best_level}</span>` : '';
+                    return `<tr class="row sub${s.recorded ? '' : ' unnamed'}">
+                        <td>${esc(s.name)}${best}</td>
+                        <td class="num lost">${s.lost || ''}</td>
+                        <td class="num won">${s.won || ''}</td>
+                        <td class="num">${s.plays || ''}</td>
+                    </tr>`;
+                  }).join('')
+                : '';
+
             const body = groups.map(group => {
                 const items = group.items.map(it => {
                     won += it.won; lost += it.lost; played += it.plays;
                     const best = opts.showBest && it.best_level
                         ? `<span class="best">best L${it.best_level}</span>` : '';
+                    // With one spirit, name it on the row itself instead of
+                    // spending a whole line on it.
+                    const only = it.spirits && it.spirits.length === 1 && it.spirits[0].recorded
+                        ? `<span class="with">${esc(it.spirits[0].name)}</span>` : '';
                     return `<tr class="row${it.plays ? '' : ' unplayed'}">
-                        <td>${esc(it.name)}${best}</td>
+                        <td>${esc(it.name)}${best}${only}</td>
                         <td class="num lost">${it.lost || ''}</td>
                         <td class="num won">${it.won || ''}</td>
                         <td class="num">${it.plays || ''}</td>
-                    </tr>`;
+                    </tr>${spiritRows(it)}`;
                 }).join('');
                 return `<tr class="exp-row"><td colspan="4">${esc(group.product)}</td></tr>${items}`;
             }).join('');
