@@ -174,6 +174,10 @@ EXPECTED_COLUMNS = {
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
+    # 014 — without these the trackers would serve one shared campaign to
+    # every account, which is exactly what going multi-user was avoiding.
+    'sleeping_gods': ('user_id',),
+    'sleeping_gods_totems': ('user_id',),
 }
 
 
@@ -288,19 +292,23 @@ def db_bypasses_rls():
 
 @app.route('/search_sleeping_gods_location', methods=['GET'])
 def search_sleeping_gods_location():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
-    location = request.args.get('term', '0')
+    # Per-account since 014: these rows carry a user_id and row-level security
+    # scopes them, so the endpoint is no longer the boundary.
+    # location is an integer column, so anything else is a 400 rather than a
+    # 500 out of the driver. This only became reachable when the endpoint
+    # stopped being owner-only — before that a stray value was refused earlier.
+    try:
+        location = int(request.args.get('term', '0'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Location must be a number.'}), 400
+
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Search  
+    # Search
     cur.execute("""
-        SELECT id,* FROM sleeping_gods  
-        WHERE location = %s 
+        SELECT id,* FROM sleeping_gods
+        WHERE location = %s
     """, (location,))
     results = cur.fetchall()
     cur.close()
@@ -360,11 +368,8 @@ def search_sleeping_gods_location():
 
 @app.route('/search_sleeping_gods_notes', methods=['GET'])
 def search_sleeping_gods_notes():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
+    # Per-account since 014: these rows carry a user_id and row-level security
+    # scopes them, so the endpoint is no longer the boundary.
     keyword = request.args.get('term', '0')
     conn = get_db_connection()
     cur = conn.cursor()
@@ -437,11 +442,8 @@ def search_sleeping_gods_notes():
 
 @app.route('/delete_sleeping_gods_row', methods=['POST'])
 def delete_sleeping_gods_row():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
+    # Per-account since 014: these rows carry a user_id and row-level security
+    # scopes them, so the endpoint is no longer the boundary.
     data = request.get_json(force=True)
     row_id = data.get('id')
     if not row_id:
@@ -456,18 +458,18 @@ def delete_sleeping_gods_row():
 
 @app.route('/reset_visited_sleeping_gods', methods=['POST'])
 def reset_visited_sleeping_gods():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
+    # Per-account since 014: these rows carry a user_id and row-level security
+    # scopes them, so the endpoint is no longer the boundary.
     try:
         # Connect to your database
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Update all records to set visited to 0
-        cursor.execute('UPDATE sleeping_gods SET visited = FALSE')
+        # Scoped twice on purpose: the policy already limits this to the
+        # caller, and the explicit user_id means a bare "reset everything"
+        # can't reach another account if that policy is ever loosened.
+        cursor.execute('UPDATE sleeping_gods SET visited = FALSE WHERE user_id = %s',
+                       (current_user()['id'],))
         
         # Commit the changes
         conn.commit()
@@ -484,11 +486,8 @@ def reset_visited_sleeping_gods():
 
 @app.route('/sleeping_gods_totems_update', methods=['POST'])
 def sleeping_gods_totems_update():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
+    # Per-account since 014: these rows carry a user_id and row-level security
+    # scopes them, so the endpoint is no longer the boundary.
     try:
         data = request.get_json()
         totem_id = data['totemId']
@@ -1196,19 +1195,45 @@ def api_login():
                     'user': user_public(user)})
 
 
+# The per-game trackers, and the title that means you own the game. A tracker
+# only appears once an account has logged a play of it — advertising a page for
+# a game someone doesn't own is just clutter.
+GAME_TRACKERS = [
+    {'key': 'spirit_island',  'label': 'Spirit Island',    'page': 'spirit_island.html',
+     'match': '%spirit island%'},
+    {'key': 'imperium',       'label': 'Imperium Stats',   'page': 'imperium.html',
+     'match': '%imperium%'},
+    {'key': 'sleeping_gods',  'label': 'Sleeping Gods Log', 'page': 'sleeping_gods.html',
+     'match': '%sleeping gods%'},
+]
+
+
 @app.route('/api/me')
 def api_me():
     user = current_user()
     payload = {'success': True, 'user': user_public(user)}
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # One query rather than three: which of the tracked games this account has
+    # actually played. RLS keeps the counts to their own rows.
+    cur.execute(
+        'SELECT ' + ', '.join(
+            f"count(*) FILTER (WHERE game_title ILIKE %s) > 0" for _ in GAME_TRACKERS
+        ) + ' FROM games', [t['match'] for t in GAME_TRACKERS])
+    played = cur.fetchone()
+    payload['trackers'] = [
+        {'key': t['key'], 'label': t['label'], 'page': t['page']}
+        for t, has in zip(GAME_TRACKERS, played) if has
+    ]
+
     if user['is_owner']:
         # Belt and braces: if the notification email ever fails or gets
         # filtered, a waiting request still shows up in the app.
-        conn = get_db_connection()
-        cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM users WHERE status = 'pending'")
         payload['pending_users'] = cur.fetchone()[0]
-        cur.close()
-        conn.close()
+    cur.close()
+    conn.close()
     return jsonify(payload)
 
 
@@ -1726,6 +1751,89 @@ def spirit_island_group(entries, plays, field, by_spirit=False):
     return groups
 
 
+# The totems in Sleeping Gods, used to seed a new account's checklist the
+# first time it opens the page. Taken from the owner's list minus 21 rows that
+# were personal bookkeeping ("#7", "22 (Quest 173)") rather than game content —
+# those stay on the owner's list and are simply not handed to anyone else.
+SLEEPING_GODS_TOTEMS = [
+    'Axe of the Cinderlands',
+    'Blade of Thrack',
+    'Book of Fame and Infame',
+    'Centipede Crown (Ruin)',
+    'Clockwork Owl',
+    'Cursed Ruby (Ruin)',
+    'Ethereal Mask (Dungeons)',
+    'Fish Bone Spear (Dungeons)',
+    'Gate Stone',
+    'God Stone',
+    "Hunter's Pebble (Ruin)",
+    'Key Stone',
+    'Lava Sword (Ruin)',
+    'Life Seed',
+    "Meecra's Guitar",
+    "Meecra's Salt",
+    "Mystic's Idol (Ruin)",
+    'Nautilus Stone (Dungeons)',
+    'Nightmare Stone (Ruin)',
+    'Obsidian Greaves (Dungeons)',
+    'Obsidian Heart',
+    "Ohmludes's Crystal",
+    'Pigment Stone (Ruin)',
+    'Puzzle Box',
+    "Raltolde's Shield",
+    "Raltoldes's Spear",
+    'Shadow Lantern (Ruin)',
+    "Shorme's Hammer",
+    'Snake Bangle',
+    'Stone of Absence (Ruin)',
+    'Stone of Bargaining',
+    'Stone of Blood',
+    'Stone of Cats',
+    'Stone of Chains',
+    'Stone of Changing (Dungeons)',
+    'Stone of Deceit',
+    'Stone of Earthquakes',
+    'Stone of Fitness',
+    'Stone of Freezing',
+    'Stone of Gluttony',
+    'Stone of Healing',
+    'Stone of Madness',
+    'Stone of Mending',
+    'Stone of Mirrors (Ruin)',
+    'Stone of Mist (Ruin)',
+    'Stone of Muscle',
+    'Stone of Music',
+    'Stone of Riddles',
+    'Stone of Roaming',
+    'Stone of Sacrifice',
+    'Stone of Screaming (Ruin)',
+    'Stone of Shanties',
+    'Stone of Spirits (Ruin)',
+    'Stone of Squids',
+    'Stone of Storms',
+    'Stone of Teeth (Ruin)',
+    'Stone of Time',
+    'Stone of Undeath',
+    'Stone of Vengeance (Ruin)',
+    'Stone of Vim (Dungeons)',
+    'Stone of Weakness',
+    'Stone of Worldly Sorrows (Ruin)',
+    'Stone of many Eyes',
+    'Stone of the Deep',
+    'Stone of the Hunt',
+    'Stone of the Lost (Ruin)',
+    'Stone of the Mind',
+    'Stone of the Wind',
+    'Stone of the Wind & Waves',
+    'Sword of the Duelist',
+    'The Perpetual Flame',
+    "Thrack's Charm",
+    "Valard's Prism (Ruin)",
+    "Zacra's Mask",
+    'Zrell Stone (Ruin)',
+]
+
+
 def spirit_island_fields(data):
     """Validate the Spirit Island pickers off a request body.
 
@@ -1931,11 +2039,9 @@ def api_spirit_island_stats():
 
 @app.route('/api/imperium_stats')
 def api_imperium_stats():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
+    # The imperium view reads `games` with security_invoker, so it has always
+    # applied row-level security as whoever is asking — the owner gate that
+    # used to sit here was the only thing making this the owner's alone.
     conn = get_db_connection()
     cur = conn.cursor()
     # One pass over the plays; the per-civilisation tally happens here rather
@@ -1966,14 +2072,18 @@ def api_imperium_stats():
 
 @app.route('/api/sleeping_gods_totems_data')
 def api_sleeping_gods_totems_data():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
+    # Per-account since 014: row-level security scopes these rows, so the
+    # endpoint no longer needs an owner gate.
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, totem, found FROM sleeping_gods_totems ORDER BY id")
+    cur.execute("SELECT count(*) FROM sleeping_gods_totems")
+    if cur.fetchone()[0] == 0:
+        # First visit: hand this account its own checklist. user_id comes from
+        # the column default, which reads the same setting the policy checks.
+        cur.executemany("INSERT INTO sleeping_gods_totems (totem, found) VALUES (%s, false)",
+                        [(t,) for t in SLEEPING_GODS_TOTEMS])
+        conn.commit()
+    cur.execute("SELECT id, totem, found FROM sleeping_gods_totems ORDER BY totem")
     rows = [{'id': r[0], 'totem': r[1], 'found': r[2]} for r in cur.fetchall()]
     cur.close()
     conn.close()
@@ -1982,11 +2092,8 @@ def api_sleeping_gods_totems_data():
 
 @app.route('/api/add_sleeping_gods', methods=['POST'])
 def api_add_sleeping_gods():
-    # Imperium and Sleeping Gods are the owner's own campaign trackers: the
-    # tables have no owner column, so the endpoint is the boundary.
-    denied = owner_only()
-    if denied:
-        return denied
+    # Per-account since 014: these rows carry a user_id and row-level security
+    # scopes them, so the endpoint is no longer the boundary.
     try:
         d = request.get_json() or {}
         def i(k): return int(d.get(k) or 0)

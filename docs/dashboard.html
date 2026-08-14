@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=7">
+    <link rel="stylesheet" href="./styles.css?v=8">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -210,11 +210,10 @@
     <nav>
         <button onclick="window.location.href='./games_overview.html'">Games Overview</button>
         <button onclick="window.location.href='./all_games.html'">All Games Ranked</button>
-        <!-- Not owner-only, unlike Imperium: this reads `games`, which is
-             row-level-secured, so each account sees only its own plays. -->
-        <button onclick="window.location.href='./spirit_island.html'">Spirit Island</button>
-        <button class="owner-only" style="display:none;" onclick="window.location.href='./imperium.html'">Imperium Stats</button>
-        <button class="owner-only" style="display:none;" onclick="window.location.href='./sleeping_gods.html'">Sleeping Gods Log</button>
+        <!-- Per-game trackers, filled in by loadMe(): each appears only once
+             this account has logged a play of that game. All three read
+             row-level-secured tables, so they show your own campaign. -->
+        <span id="tracker-nav"></span>
     </nav>
 </div>
 </div>
@@ -287,7 +286,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=7"></script>
+<script src="./tabs.js?v=8"></script>
 <script>
 requireAuth();
 
@@ -375,8 +374,12 @@ async function loadMe() {
     const me = data?.user;
     if (!me) return;
     document.getElementById('who').textContent = me.display_name || me.email;
-    // Imperium and Sleeping Gods are the owner's own campaign trackers. The
-    // server refuses them for anyone else; this keeps them off the page too.
+
+    // A tracker button per game this account has actually played.
+    document.getElementById('tracker-nav').innerHTML = (data.trackers || []).map(t =>
+        `<button onclick="window.location.href='./${t.page}'">${escapeHtml(t.label)}</button>`
+    ).join('');
+
     if (me.is_owner) {
         const usersBtn = document.getElementById('users-nav');
         usersBtn.style.display = '';
