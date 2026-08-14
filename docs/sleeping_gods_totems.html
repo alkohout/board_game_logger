@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Sleeping Gods — Totems</title>
-    <link rel="stylesheet" href="./styles.css?v=8">
+    <link rel="stylesheet" href="./styles.css?v=9">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -42,17 +42,18 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=8"></script>
+    <script src="./tabs.js?v=9"></script>
     <script>
         requireAuth();
         renderTabs('games');
 
         let allTotems = [];
 
+        // Totems and endings count towards unlocking cards; the cards
+        // themselves don't count towards their own thresholds. The server
+        // sends a category per row, so this no longer guesses from the name.
         function countChecked() {
-            return allTotems
-                .filter(t => t.found && !t.totem.includes('Quest'))
-                .length;
+            return allTotems.filter(t => t.found && t.category !== 'unlocked').length;
         }
 
         function refreshCount() {
@@ -86,38 +87,33 @@
             });
         }
 
+        // Ticks any card whose threshold the count has reached. Driven by each
+        // card's own unlocks_at — the number in its name — rather than a table
+        // of hardcoded row ids, which were one account's and would have ticked
+        // the wrong boxes for anybody else.
         function checkUnlocks() {
             const c = countChecked();
-            const unlocks = [
-                [4,  79, 'Congratulations! You have ' + c + ' totems/endings — Quests 171-172 unlocked!'],
-                [7,  82, 'Congratulations! You have ' + c + ' totems/endings — Quests 169-170 unlocked!'],
-                [9,  85, 'Congratulations! You have ' + c + ' totems/endings — Quest 168 unlocked!'],
-                [11, 80, 'Congratulations! You have ' + c + ' totems/endings — Quest 174 unlocked!'],
-                [13, 83, 'Congratulations! You have ' + c + ' totems/endings — Quest 175 unlocked!'],
-                [15, 86, 'Congratulations! You have ' + c + ' totems/endings — Quests 176-177 unlocked!'],
-                [18, 81, 'Congratulations! You have ' + c + ' totems/endings — Quests 178-180 unlocked!'],
-                [22, 84, 'Congratulations! You have ' + c + ' totems/endings — Quest 173 unlocked!'],
-            ];
-            unlocks.forEach(([target, questId, msg]) => {
-                if (c === target) {
-                    const totem = allTotems.find(t => t.id === questId);
-                    const cb = document.getElementById('t-' + questId);
-                    if (totem && !totem.found && cb) {
-                        cb.checked = true;
-                        toggleTotem(questId, true);
-                        alert(msg);
-                    }
-                }
-            });
+            allTotems
+                .filter(t => t.category === 'unlocked' && !t.found && c >= t.unlocks_at)
+                .forEach(card => {
+                    const cb = document.getElementById('t-' + card.id);
+                    if (cb) cb.checked = true;
+                    toggleTotem(card.id, true);
+                    alert(`Congratulations! You have ${c} totems/endings — ${card.totem} unlocked!`);
+                });
         }
 
         async function load() {
             const data = await apiGet('/api/sleeping_gods_totems_data');
             if (!data) return;
             allTotems = data.totems;
-            renderGrid('totems-body',   allTotems.slice(0, 75));
-            renderGrid('unlocked-body', allTotems.slice(75, 83));
-            renderGrid('endings-body',  allTotems.slice(83));
+            // Grouped by what each row is, not by where it sits in the list.
+            // The old slice(0,75)/slice(75,83) broke the moment anything was
+            // reordered or a row was added by hand.
+            const of = c => allTotems.filter(t => t.category === c);
+            renderGrid('totems-body',   of('totem'));
+            renderGrid('unlocked-body', of('unlocked').sort((a, b) => a.unlocks_at - b.unlocks_at));
+            renderGrid('endings-body',  of('ending').sort((a, b) => a.unlocks_at - b.unlocks_at));
             refreshCount();
         }
         load();

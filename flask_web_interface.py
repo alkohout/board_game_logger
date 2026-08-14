@@ -1751,87 +1751,73 @@ def spirit_island_group(entries, plays, field, by_spirit=False):
     return groups
 
 
-# The totems in Sleeping Gods, used to seed a new account's checklist the
-# first time it opens the page. Taken from the owner's list minus 21 rows that
-# were personal bookkeeping ("#7", "22 (Quest 173)") rather than game content —
-# those stay on the owner's list and are simply not handed to anyone else.
+# The official Sleeping Gods achievements sheet, in its three sections. Used
+# to seed a new account's checklist; the owner's own rows predate this and use
+# a few different spellings, which is why the page classifies by shape (below)
+# rather than by matching these strings.
 SLEEPING_GODS_TOTEMS = [
-    'Axe of the Cinderlands',
-    'Blade of Thrack',
-    'Book of Fame and Infame',
-    'Centipede Crown (Ruin)',
-    'Clockwork Owl',
-    'Cursed Ruby (Ruin)',
-    'Ethereal Mask (Dungeons)',
-    'Fish Bone Spear (Dungeons)',
-    'Gate Stone',
-    'God Stone',
-    "Hunter's Pebble (Ruin)",
-    'Key Stone',
-    'Lava Sword (Ruin)',
-    'Life Seed',
-    "Meecra's Guitar",
-    "Meecra's Salt",
-    "Mystic's Idol (Ruin)",
-    'Nautilus Stone (Dungeons)',
-    'Nightmare Stone (Ruin)',
-    'Obsidian Greaves (Dungeons)',
-    'Obsidian Heart',
-    "Ohmludes's Crystal",
-    'Pigment Stone (Ruin)',
-    'Puzzle Box',
-    "Raltolde's Shield",
-    "Raltoldes's Spear",
-    'Shadow Lantern (Ruin)',
-    "Shorme's Hammer",
-    'Snake Bangle',
-    'Stone of Absence (Ruin)',
-    'Stone of Bargaining',
-    'Stone of Blood',
-    'Stone of Cats',
-    'Stone of Chains',
-    'Stone of Changing (Dungeons)',
-    'Stone of Deceit',
-    'Stone of Earthquakes',
-    'Stone of Fitness',
-    'Stone of Freezing',
-    'Stone of Gluttony',
-    'Stone of Healing',
-    'Stone of Madness',
-    'Stone of Mending',
-    'Stone of Mirrors (Ruin)',
-    'Stone of Mist (Ruin)',
-    'Stone of Muscle',
-    'Stone of Music',
-    'Stone of Riddles',
-    'Stone of Roaming',
-    'Stone of Sacrifice',
-    'Stone of Screaming (Ruin)',
-    'Stone of Shanties',
-    'Stone of Spirits (Ruin)',
-    'Stone of Squids',
-    'Stone of Storms',
-    'Stone of Teeth (Ruin)',
-    'Stone of Time',
-    'Stone of Undeath',
-    'Stone of Vengeance (Ruin)',
-    'Stone of Vim (Dungeons)',
-    'Stone of Weakness',
-    'Stone of Worldly Sorrows (Ruin)',
-    'Stone of many Eyes',
-    'Stone of the Deep',
-    'Stone of the Hunt',
-    'Stone of the Lost (Ruin)',
-    'Stone of the Mind',
-    'Stone of the Wind',
-    'Stone of the Wind & Waves',
-    'Sword of the Duelist',
-    'The Perpetual Flame',
-    "Thrack's Charm",
-    "Valard's Prism (Ruin)",
-    "Zacra's Mask",
-    'Zrell Stone (Ruin)',
+    'Axe of the Cinderlands', 'Blade of Thrack', 'Book of Fame and Infame',
+    'Centipede Crown (Ruin)', 'Clockwork Owl', 'Cursed Ruby (Ruin)',
+    'Ethereal Mask (Dungeons)', 'Fish Bone Spear (Dungeons)', 'Gate Stone',
+    'God Stone', "Hunter's Pebble (Ruin)", 'Key Stone', 'Lava Sword (Ruin)',
+    'Life Seed', "Meecra's Guitar", "Meecra's Salt", "Mystic's Idol (Ruin)",
+    'Nautilus Stone (Dungeons)', 'Nightmare Stone (Ruin)',
+    'Obsidian Greaves (Dungeons)', 'Obsidian Heart', "Ohmlude's Crystal",
+    'Pigment Stone (Ruin)', 'Puzzle Box', "Raltolde's Shield",
+    "Raltolde's Spear", 'Shadow Lantern (Ruin)', "Shorme's Hammer",
+    'Snake Bangle', 'Stone of Absence (Ruin)', 'Stone of Bargaining',
+    'Stone of Blood', 'Stone of Cats', 'Stone of Chains',
+    'Stone of Changing (Dungeons)', 'Stone of Deceit', 'Stone of Earthquakes',
+    'Stone of Fitness', 'Stone of Freezing', 'Stone of Gluttony',
+    'Stone of Healing', 'Stone of the Lost (Ruin)', 'Stone of Madness',
+    'Stone of Many Eyes', 'Stone of Mending', 'Stone of Mirrors (Ruin)',
+    'Stone of Muscle', 'Stone of Music', 'Stone of Mist (Ruin)',
+    'Stone of Riddles', 'Stone of Roaming', 'Stone of Sacrifice',
+    'Stone of Screaming (Ruin)', 'Stone of Shanties', 'Stone of Spirits (Ruin)',
+    'Stone of Squids', 'Stone of Storms', 'Stone of the Deep',
+    'Stone of the Hunt', 'Stone of the Mind', 'Stone of the Wind',
+    'Stone of the Wind & Waves', 'Stone of Teeth (Ruin)', 'Stone of Time',
+    'Stone of Undeath', 'Stone of Vengeance (Ruin)', 'Stone of Vim (Dungeons)',
+    'Stone of Weakness', 'Stone of Worldly Sorrows (Ruin)',
+    'Sword of the Duelist', 'The Perpetual Flame', "Thrack's Charm",
+    "Valard's Prism (Ruin)", "Zacra's Mask", 'Zrell Stone (Ruin)',
 ]
+
+# The leading number is the count of totems-and-endings that unlocks the card,
+# which is why the threshold is read off the name rather than kept separately.
+SLEEPING_GODS_UNLOCKED = [
+    '4 (Quests 171-172)', '7 (Quest 169-170)', '9 (Quest 168)',
+    '11 (Quest 174)', '13 (Quest 175)', '15 (Quests 176-177)',
+    '18 (Quest 178-180)', '22 (Quest 173)',
+]
+
+SLEEPING_GODS_ENDINGS = [f'#{n}' for n in range(1, 14)]
+
+SLEEPING_GODS_SHEET = (SLEEPING_GODS_TOTEMS + SLEEPING_GODS_UNLOCKED
+                       + SLEEPING_GODS_ENDINGS)
+
+_ENDING_RE  = re.compile(r'^#\s*(\d+)$')
+_UNLOCKED_RE = re.compile(r'^(\d+)\s*\(Quests?\b[^)]*\)$', re.I)
+
+
+def sleeping_gods_category(name):
+    """Which section of the sheet a row belongs to, and its unlock threshold.
+
+    Matched by shape, not by exact string. The owner's list predates the
+    seeded one and differs in small ways — "Quests 171 - 172" with spaces,
+    "Ohmludes's Crystal" with an extra s — and position can't be used either,
+    because the page used to slice the array by index and any reordering (or a
+    row added by hand) silently regrouped everything.
+    """
+    name = (name or '').strip()
+    m = _ENDING_RE.match(name)
+    if m:
+        return 'ending', int(m.group(1))
+    m = _UNLOCKED_RE.match(name)
+    if m:
+        return 'unlocked', int(m.group(1))
+    return 'totem', None
+
 
 
 def spirit_island_fields(data):
@@ -2078,16 +2064,26 @@ def api_sleeping_gods_totems_data():
     cur = conn.cursor()
     cur.execute("SELECT count(*) FROM sleeping_gods_totems")
     if cur.fetchone()[0] == 0:
-        # First visit: hand this account its own checklist. user_id comes from
-        # the column default, which reads the same setting the policy checks.
+        # First visit: hand this account the whole sheet — 75 totems, 8
+        # unlocked cards and 13 endings. user_id comes from the column
+        # default, which reads the same setting the policy checks.
         cur.executemany("INSERT INTO sleeping_gods_totems (totem, found) VALUES (%s, false)",
-                        [(t,) for t in SLEEPING_GODS_TOTEMS])
+                        [(t,) for t in SLEEPING_GODS_SHEET])
         conn.commit()
-    cur.execute("SELECT id, totem, found FROM sleeping_gods_totems ORDER BY totem")
-    rows = [{'id': r[0], 'totem': r[1], 'found': r[2]} for r in cur.fetchall()]
+    cur.execute("SELECT id, totem, found FROM sleeping_gods_totems ORDER BY id")
+    rows = []
+    for r in cur.fetchall():
+        category, threshold = sleeping_gods_category(r[1])
+        rows.append({'id': r[0], 'totem': r[1], 'found': r[2],
+                     'category': category, 'unlocks_at': threshold})
     cur.close()
     conn.close()
-    return jsonify({'totems': rows})
+    # The count that unlocks cards is totems and endings only — the cards
+    # themselves don't count towards their own thresholds.
+    return jsonify({
+        'totems': rows,
+        'achieved': sum(1 for r in rows if r['found'] and r['category'] != 'unlocked'),
+    })
 
 
 @app.route('/api/add_sleeping_gods', methods=['POST'])
