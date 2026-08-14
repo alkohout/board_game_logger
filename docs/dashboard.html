@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=4">
+    <link rel="stylesheet" href="./styles.css?v=5">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -74,6 +74,22 @@
     </div>
     <label>Result:</label>
     <textarea id="result" rows="1" placeholder="Add result here..."></textarea>
+    <!-- Spirit Island records three things that vary independently, so they get
+         their own fields rather than being crammed into Level. Hidden until the
+         title says Spirit Island. -->
+    <div id="si-fields" style="display:none;">
+        <label>Spirit:</label>
+        <select id="spirit"><option value="">—</option></select>
+        <label>Adversary:</label>
+        <div style="display:flex; gap:8px;">
+            <select id="adversary" style="flex:1; min-width:0;"><option value="">—</option></select>
+            <select id="adversary_level" style="width:5.5em;">
+                <option value="">Lvl</option>
+            </select>
+        </div>
+        <label>Scenario:</label>
+        <select id="scenario"><option value="">—</option></select>
+    </div>
     <label>Level:</label>
     <textarea id="level" rows="2" placeholder="Add level here..."></textarea>
     <label>My Score:</label>
@@ -157,6 +173,9 @@
     <nav>
         <button onclick="window.location.href='./games_overview.html'">Games Overview</button>
         <button onclick="window.location.href='./all_games.html'">All Games Ranked</button>
+        <!-- Not owner-only, unlike Imperium: this reads `games`, which is
+             row-level-secured, so each account sees only its own plays. -->
+        <button onclick="window.location.href='./spirit_island.html'">Spirit Island</button>
         <button class="owner-only" style="display:none;" onclick="window.location.href='./imperium.html'">Imperium Stats</button>
         <button class="owner-only" style="display:none;" onclick="window.location.href='./sleeping_gods.html'">Sleeping Gods Log</button>
     </nav>
@@ -231,7 +250,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=4"></script>
+<script src="./tabs.js?v=5"></script>
 <script>
 requireAuth();
 
@@ -390,6 +409,42 @@ setupAutocomplete('search_title', 'search_suggestions');
 setupAutocomplete('edit_note_search', 'edit_suggestions');
 setupAutocomplete('selector_game_title', 'selector_suggestions');
 
+// Spirit Island fields. Fetched once, the first time a Spirit Island title is
+// typed, so every other game pays nothing for them.
+const SI_FIELDS = ['spirit', 'adversary', 'adversary_level', 'scenario'];
+let siLoaded = false;
+
+function isSpiritIsland(title) {
+    return /spirit\s*island/i.test(title);
+}
+
+async function fillSpiritIsland() {
+    if (siLoaded) return;
+    const opts = await apiGet('/api/spirit_island_options');
+    if (!opts) return;
+    siLoaded = true;
+    const fill = (id, names) => {
+        document.getElementById(id).innerHTML = '<option value="">—</option>' +
+            names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    };
+    fill('spirit', opts.spirits);
+    fill('adversary', opts.adversaries);
+    fill('scenario', opts.scenarios);
+    document.getElementById('adversary_level').innerHTML = '<option value="">Lvl</option>' +
+        [1, 2, 3, 4, 5, 6].map(n => `<option value="${n}">${n}</option>`).join('');
+}
+
+function toggleSpiritIsland() {
+    const on = isSpiritIsland(document.getElementById('game_title').value);
+    document.getElementById('si-fields').style.display = on ? '' : 'none';
+    if (on) fillSpiritIsland();
+}
+document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
+// The autocomplete sets the value directly, which fires no input event.
+document.getElementById('game_title').addEventListener('change', toggleSpiritIsland);
+document.getElementById('add_suggestions').addEventListener('click',
+    () => setTimeout(toggleSpiritIsland, 0));
+
 // Log game
 document.getElementById('log-btn').addEventListener('click', async () => {
     const btn = document.getElementById('log-btn');
@@ -398,20 +453,28 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     const dp = document.getElementById('date_played').value;
     if (!title || !dp) { alert('Date and game title are required.'); return; }
     btn.disabled = true;
-    const data = await apiPost('/api/add_game', {
+    const payload = {
         date_played: dp, game_title: title,
         result: document.getElementById('result').value,
         level: document.getElementById('level').value,
         my_score: document.getElementById('my_score').value,
         bot_score: document.getElementById('bot_score').value,
         notes: document.getElementById('notes').value
-    });
+    };
+    // Only send them for a Spirit Island play; the API ignores unknown names
+    // anyway, but there is no reason to send four empty fields every time.
+    if (isSpiritIsland(title)) {
+        SI_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
+    }
+    const data = await apiPost('/api/add_game', payload);
     btn.disabled = false;
     if (data?.success) {
         status.textContent = 'Logged!';
         status.className = 'status-ok';
         status.style.display = '';
         ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
+        SI_FIELDS.forEach(id => document.getElementById(id).value = '');
+        document.getElementById('si-fields').style.display = 'none';
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);

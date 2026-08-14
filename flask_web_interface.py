@@ -168,7 +168,9 @@ def owner_only():
 
 EXPECTED_COLUMNS = {
     'users': ('token_version',),
-    'games': ('user_id',),
+    # add_game writes the Spirit Island columns on every insert, so code
+    # deployed ahead of migration 012 would fail to log any game at all.
+    'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario'),
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
@@ -1411,13 +1413,33 @@ def api_dashboard():
 @app.route('/api/add_game', methods=['POST'])
 def api_add_game():
     data = request.get_json() or {}
+
+    def picked(field, allowed):
+        """Only store a name we know, so the stats page can count on it."""
+        value = (data.get(field) or '').strip()
+        return next((n for _, n in allowed if n.lower() == value.lower()), None)
+
+    level = data.get('adversary_level')
+    try:
+        level = int(level) if str(level or '').strip() else None
+    except (TypeError, ValueError):
+        level = None
+    if level is not None and not 1 <= level <= 6:
+        level = None
+
+    adversary = picked('adversary', SPIRIT_ISLAND_ADVERSARIES)
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score,"
+            " spirit, adversary, adversary_level, scenario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
-             data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''))
+             data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
+             picked('spirit', SPIRIT_ISLAND_SPIRITS), adversary,
+             # A level with no adversary is meaningless and would skew "best beaten".
+             level if adversary else None,
+             picked('scenario', SPIRIT_ISLAND_SCENARIOS))
         )
         conn.commit()
         cur.close()
@@ -1512,6 +1534,142 @@ IMPERIUM_CIVS = [
     ('Horizons', 'Tang', 3),
     ('Horizons', 'Wagadou', 3),
 ]
+
+
+# Spirit Island, for the four products owned: base, Branch & Claw, Jagged Earth
+# and Nature Incarnate. Promo Pack 2 / Feather & Flame content (the Scotland
+# adversary, A Diversity of Spirits, Varied Terrains) is deliberately absent —
+# add it here if those are ever picked up, and the page follows automatically.
+SPIRIT_ISLAND_SPIRITS = [
+    ('Spirit Island', "Lightning's Swift Strike"),
+    ('Spirit Island', 'River Surges in Sunlight'),
+    ('Spirit Island', 'Vital Strength of the Earth'),
+    ('Spirit Island', 'Shadows Flicker Like Flame'),
+    ('Spirit Island', 'Thunderspeaker'),
+    ('Spirit Island', 'A Spread of Rampant Green'),
+    ('Spirit Island', "Ocean's Hungry Grasp"),
+    ('Spirit Island', 'Bringer of Dreams and Nightmares'),
+    ('Branch & Claw', 'Keeper of the Forbidden Wilds'),
+    ('Branch & Claw', 'Sharp Fangs Behind the Leaves'),
+    ('Jagged Earth', "Stone's Unyielding Defiance"),
+    ('Jagged Earth', 'Shifting Memory of Ages'),
+    ('Jagged Earth', 'Grinning Trickster Stirs Up Trouble'),
+    ('Jagged Earth', 'Lure of the Deep Wilderness'),
+    ('Jagged Earth', 'Many Minds Move as One'),
+    ('Jagged Earth', 'Volcano Looming High'),
+    ('Jagged Earth', 'Shroud of Silent Mist'),
+    ('Jagged Earth', 'Vengeance as a Burning Plague'),
+    ('Jagged Earth', 'Starlight Seeks Its Form'),
+    ('Jagged Earth', 'Fractured Days Split the Sky'),
+    ('Nature Incarnate', 'Ember-Eyed Behemoth'),
+    ('Nature Incarnate', 'Hearth-Vigil'),
+    ('Nature Incarnate', 'Breath of Darkness Down Your Spine'),
+    ('Nature Incarnate', 'Relentless Gaze of the Sun'),
+    ('Nature Incarnate', 'Towering Roots of the Jungle'),
+    ('Nature Incarnate', 'Dances Up Earthquakes'),
+    ('Nature Incarnate', 'Wandering Voice Keens Delirium'),
+    ('Nature Incarnate', 'Wounded Waters Bleeding'),
+]
+
+SPIRIT_ISLAND_ADVERSARIES = [
+    ('Spirit Island', 'Brandenburg-Prussia'),
+    ('Spirit Island', 'England'),
+    ('Spirit Island', 'Sweden'),
+    ('Branch & Claw', 'France'),
+    ('Jagged Earth', 'Habsburg Monarchy'),
+    ('Jagged Earth', 'Russia'),
+    ('Nature Incarnate', 'Habsburg Mining Expedition'),
+]
+
+SPIRIT_ISLAND_SCENARIOS = [
+    ('Spirit Island', 'Blitz'),
+    ('Spirit Island', "Guard the Isle's Heart"),
+    ('Spirit Island', 'Rituals of Terror'),
+    ('Spirit Island', 'Dahan Insurrection'),
+    ('Branch & Claw', 'Second Wave'),
+    ('Branch & Claw', 'Powers Long Forgotten'),
+    ('Branch & Claw', 'Ward the Shores'),
+    ('Branch & Claw', 'Rituals of the Destroying Flame'),
+    ('Jagged Earth', 'Elemental Invocation'),
+    ('Jagged Earth', 'Despicable Theft'),
+    ('Jagged Earth', 'The Great River'),
+    ('Nature Incarnate', 'Destiny Unfolds'),
+    ('Nature Incarnate', 'Surges of Colonization'),
+]
+
+# Titles that count as a Spirit Island play. Matched with ILIKE, so this also
+# picks up Horizons of Spirit Island — and pointedly not "Bah Humbug: the
+# giving spirit", which a bare '%spirit%' would have swept in.
+SPIRIT_ISLAND_TITLE = '%spirit island%'
+
+# The adversary dial, written as "Level 3", "lvl 3", "L3" or just "3" after the
+# name. Habsburg is the one name that appears twice, so longest-match wins.
+ADVERSARY_LEVEL_RE = re.compile(r'(?:level|lvl|l)\s*([1-6])\b', re.I)
+
+
+def spirit_island_group(entries, plays, field):
+    """Won/lost per named thing, grouped by the product it came in."""
+    groups = []
+    for product, name in entries:
+        key = name.lower()
+        rows = [p for p in plays if (p[field] or '').lower() == key]
+        won = sum(1 for p in rows if 'won' in (p['result'] or '').lower())
+        lost = sum(1 for p in rows if 'lost' in (p['result'] or '').lower())
+        if not groups or groups[-1]['product'] != product:
+            groups.append({'product': product, 'items': []})
+        # plays counts every logged game, including the many with no result
+        # recorded — otherwise a spirit played six times looks unplayed.
+        groups[-1]['items'].append(
+            {'name': name, 'won': won, 'lost': lost, 'plays': len(rows)})
+    return groups
+
+
+@app.route('/api/spirit_island_options')
+def api_spirit_island_options():
+    """The pickers on the log form. One source of truth with the stats page."""
+    return jsonify({
+        'spirits': [n for _, n in SPIRIT_ISLAND_SPIRITS],
+        'adversaries': [n for _, n in SPIRIT_ISLAND_ADVERSARIES],
+        'scenarios': [n for _, n in SPIRIT_ISLAND_SCENARIOS],
+    })
+
+
+@app.route('/api/spirit_island_stats')
+def api_spirit_island_stats():
+    # Unlike Imperium, this reads `games`, which is row-level-secured — so it
+    # needs no owner gate. Every account sees its own Spirit Island plays.
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT spirit, adversary, adversary_level, scenario, result
+                   FROM games WHERE game_title ILIKE %s""", (SPIRIT_ISLAND_TITLE,))
+    plays = [{'spirit': r[0], 'adversary': r[1], 'adversary_level': r[2],
+              'scenario': r[3], 'result': r[4]} for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+
+    # How far up the dials each adversary has been beaten — the number people
+    # actually care about, and invisible in a plain won/lost tally.
+    best = {}
+    for p in plays:
+        if p['adversary'] and p['adversary_level'] and 'won' in (p['result'] or '').lower():
+            name = p['adversary']
+            best[name] = max(best.get(name, 0), p['adversary_level'])
+    adversaries = spirit_island_group(SPIRIT_ISLAND_ADVERSARIES, plays, 'adversary')
+    for group in adversaries:
+        for item in group['items']:
+            item['best_level'] = best.get(item['name'])
+
+    recorded = sum(1 for p in plays
+                   if p['spirit'] or p['adversary'] or p['scenario'])
+    return jsonify({
+        'spirits': spirit_island_group(SPIRIT_ISLAND_SPIRITS, plays, 'spirit'),
+        'adversaries': adversaries,
+        'scenarios': spirit_island_group(SPIRIT_ISLAND_SCENARIOS, plays, 'scenario'),
+        'total_plays': len(plays),
+        # Plays with nothing recorded aren't a bug to hide — the page says so,
+        # otherwise the totals look wrong against the Games tab.
+        'unrecorded_plays': len(plays) - recorded,
+    })
 
 
 @app.route('/api/imperium_stats')

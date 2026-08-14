@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Spirit Island Stats</title>
+    <link rel="stylesheet" href="./styles.css?v=5">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        table.si { border-collapse: collapse; width: 100%; }
+        table.si th, table.si td { padding: 6px 8px; }
+        table.si thead th { font-size: 0.8em; color: #aaa; text-align: right; }
+        table.si thead th:first-child { text-align: left; }
+        .exp-row td {
+            padding-top: 18px; font-weight: bold; color: #FFD54F;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+        .row td { border-bottom: 1px solid rgba(255,255,255,0.07); }
+        .num { text-align: right; width: 54px; font-variant-numeric: tabular-nums; }
+        .won  { color: #90EE90; }
+        .lost { color: #FF8A80; }
+        .unplayed td { color: #777; }
+        .totals td { border-top: 2px solid rgba(255,255,255,0.3); font-weight: bold; padding-top: 10px; }
+        .best { color: #FFD54F; font-size: 0.8em; margin-left: 6px; white-space: nowrap; }
+        .caption { color: #ccc; font-size: 0.9em; margin: 0 0 4px; }
+        .aside { color: #888; font-size: 0.8em; margin: 10px 0 0; }
+    </style>
+</head>
+<body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
+    <div class="form-container">
+        <h2>Spirit Island</h2>
+        <p class="caption">Base game, Branch &amp; Claw, Jagged Earth and Nature Incarnate.
+           Greyed out means never played.</p>
+        <div id="body"><p style="color:#aaa;">Loading...</p></div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script src="./tabs.js?v=5"></script>
+    <script>
+        requireAuth();
+        renderTabs('games');
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        // Won and lost don't add up to plays: plenty of older entries never had
+        // a result recorded. Showing plays separately keeps a spirit you played
+        // six times from reading as unplayed.
+        function section(title, groups, opts = {}) {
+            let won = 0, lost = 0, played = 0;
+            const body = groups.map(group => {
+                const items = group.items.map(it => {
+                    won += it.won; lost += it.lost; played += it.plays;
+                    const best = opts.showBest && it.best_level
+                        ? `<span class="best">best L${it.best_level}</span>` : '';
+                    return `<tr class="row${it.plays ? '' : ' unplayed'}">
+                        <td>${esc(it.name)}${best}</td>
+                        <td class="num lost">${it.lost || ''}</td>
+                        <td class="num won">${it.won || ''}</td>
+                        <td class="num">${it.plays || ''}</td>
+                    </tr>`;
+                }).join('');
+                return `<tr class="exp-row"><td colspan="4">${esc(group.product)}</td></tr>${items}`;
+            }).join('');
+
+            return `<h3 style="margin:22px 0 0;">${esc(title)}</h3>
+                <table class="si">
+                    <thead><tr><th></th><th>Lost</th><th>Won</th><th>Plays</th></tr></thead>
+                    <tbody>
+                        ${body}
+                        <tr class="totals">
+                            <td>Total</td>
+                            <td class="num lost">${lost}</td>
+                            <td class="num won">${won}</td>
+                            <td class="num">${played}</td>
+                        </tr>
+                    </tbody>
+                </table>`;
+        }
+
+        async function load() {
+            const data = await apiGet('/api/spirit_island_stats');
+            const body = document.getElementById('body');
+            if (!data) return;
+            if (data.success === false) {
+                body.innerHTML = `<p class="status-err">${esc(data.message || 'Not allowed.')}</p>`;
+                return;
+            }
+
+            // Say why the totals fall short of the play count, rather than
+            // letting the page look like it has lost some games.
+            const gap = data.unrecorded_plays
+                ? `<p class="aside">${data.total_plays} Spirit Island plays logged;
+                     ${data.unrecorded_plays} of them don't record a spirit, adversary or
+                     scenario, so they appear in no table above. Newly logged plays will.</p>`
+                : '';
+
+            body.innerHTML =
+                section('Spirits', data.spirits) +
+                section('Adversaries', data.adversaries, { showBest: true }) +
+                section('Scenarios', data.scenarios) +
+                gap;
+        }
+        load();
+    </script>
+</body>
+</html>
