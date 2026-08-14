@@ -527,17 +527,19 @@ def search_last_played():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Search for the most recent play and notes
+    # The most recent play, and the details of that same play.
+    #
+    # This used to take the date from the newest date_played but the details
+    # from the highest id — the row inserted last. Log a game for an older date
+    # after logging a newer one and they point at different rows, so the card
+    # showed one play's date beside another play's result. Ordering by
+    # date_played then id keeps them on the same row, the same rule the
+    # latest-non-empty query below already follows.
     cur.execute("""
-        SELECT g.date_played,  
-	    COALESCE( (SELECT g2.id
-       		  FROM games AS g2
-       		  WHERE g2.game_title = g.game_title
-       		  ORDER BY g2.id DESC
-       		  LIMIT 1), 0) 
-        FROM games AS g 
-        WHERE g.game_title ILIKE %s 
-        ORDER BY g.date_played DESC 
+        SELECT date_played, id
+        FROM games
+        WHERE game_title ILIKE %s
+        ORDER BY date_played DESC, id DESC
         LIMIT 1
     """, (f"%{game_title}%",))
     last_played = cur.fetchone()
@@ -548,25 +550,13 @@ def search_last_played():
         conn.close()
         return jsonify({'Error': 'No record found for the specified game.'})
 
-    # Fetch notes
-    cur.execute("SELECT notes FROM games WHERE id = %s", (f"{last_played[1]}",))
-    notes = cur.fetchone()[0]
-
-    # Fetch result
-    cur.execute("SELECT result FROM games WHERE id = %s", (f"{last_played[1]}",))
-    result = cur.fetchone()[0]
-
-    # Fetch level 
-    cur.execute("SELECT level FROM games WHERE id = %s", (f"{last_played[1]}",))
-    level = cur.fetchone()[0]
-
-    # Fetch my_score 
-    cur.execute("SELECT my_score FROM games WHERE id = %s", (f"{last_played[1]}",))
-    my_score = cur.fetchone()[0]
-
-    # Fetch bot_score 
-    cur.execute("SELECT bot_score FROM games WHERE id = %s", (f"{last_played[1]}",))
-    bot_score = cur.fetchone()[0]
+    # One row, one query — this was five round trips for five columns of the
+    # same row, and adding the Spirit Island fields would have made it eight.
+    cur.execute("""SELECT notes, result, level, my_score, bot_score,
+                          spirit, adversary, adversary_level, scenario
+                   FROM games WHERE id = %s""", (last_played[1],))
+    (notes, result, level, my_score, bot_score,
+     spirit, adversary, adversary_level, scenario) = cur.fetchone()
 
     # Fetch total number of times the game was played
     cur.execute("SELECT COUNT(*) FROM games WHERE game_title ILIKE %s", (f"%{game_title}%",))
@@ -608,21 +598,22 @@ def search_last_played():
     # in its notes is easy to find. Ordered by when it was played, not by id,
     # so a game logged after the fact doesn't jump the queue.
     cur.execute("""
-        SELECT date_played, notes, result, level, my_score, bot_score
+        SELECT date_played, notes, result, level, my_score, bot_score,
+               spirit, adversary, adversary_level, scenario
         FROM games
         WHERE game_title ILIKE %s
           AND ( (notes  IS NOT NULL AND btrim(notes)  NOT IN ('', 'null')) OR
-                (result IS NOT NULL AND btrim(result) NOT IN ('', 'null')) )
+                (result IS NOT NULL AND btrim(result) NOT IN ('', 'null')) OR
+                -- A Spirit Island play picked from the dropdowns records real
+                -- detail without necessarily typing a note or a result.
+                spirit IS NOT NULL OR adversary IS NOT NULL OR scenario IS NOT NULL )
         ORDER BY date_played DESC, id DESC
         LIMIT 1
     """, (f"%{game_title}%",))
-    nonempty = cur.fetchone()
-    date_nonempty = nonempty[0] if nonempty else None
-    notes_nonempty = nonempty[1] if nonempty else None
-    result_nonempty = nonempty[2] if nonempty else None
-    level_nonempty = nonempty[3] if nonempty else None
-    my_score_nonempty = nonempty[4] if nonempty else None
-    bot_score_nonempty = nonempty[5] if nonempty else None
+    nonempty = cur.fetchone() or (None,) * 10
+    (date_nonempty, notes_nonempty, result_nonempty, level_nonempty,
+     my_score_nonempty, bot_score_nonempty, spirit_nonempty, adversary_nonempty,
+     adversary_level_nonempty, scenario_nonempty) = nonempty
 
     cur.close()
     conn.close()
@@ -635,6 +626,10 @@ def search_last_played():
 	    'level': level if level else None,
 	    'my_score': my_score if my_score else None,
 	    'bot_score': bot_score if bot_score else None,
+            'spirit': spirit,
+            'adversary': adversary,
+            'adversary_level': adversary_level,
+            'scenario': scenario,
             'date_played': last_played[0].isoformat(),
             'date_played_nonempty': date_nonempty.isoformat() if date_nonempty else None,
             'notes_nonempty': notes_nonempty if notes_nonempty else None,
@@ -642,6 +637,10 @@ def search_last_played():
 	    'level_nonempty': level_nonempty if level_nonempty else None,
 	    'my_score_nonempty': my_score_nonempty if my_score_nonempty else None,
 	    'bot_score_nonempty': bot_score_nonempty if bot_score_nonempty else None,
+            'spirit_nonempty': spirit_nonempty,
+            'adversary_nonempty': adversary_nonempty,
+            'adversary_level_nonempty': adversary_level_nonempty,
+            'scenario_nonempty': scenario_nonempty,
             #'last_played_date': last_played_date.isoformat() if last_played_date else None,
             'total_times_played': total_plays,
             'played_this_week': played_this_week,

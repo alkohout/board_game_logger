@@ -71,18 +71,35 @@ function setupAutocomplete(inputId, suggestionsId, onSelect) {
     const box = document.getElementById(suggestionsId);
     if (!input || !box) return;
 
+    // Every keystroke starts a request, and they don't come back in order.
+    // Without this counter, picking a suggestion clears the list and then an
+    // older reply lands and draws it again — once per request still in flight,
+    // which is why a fast typist saw the dropdown reopen several times over.
+    // Bumping `latest` invalidates everything outstanding.
+    let latest = 0;
+    const dismiss = () => { latest++; box.innerHTML = ''; };
+
     input.addEventListener('input', async () => {
+        const mine = ++latest;
         const term = input.value.trim();
         if (term.length < 2) { box.innerHTML = ''; return; }
         const data = await apiGet('/search_games?term=' + encodeURIComponent(term));
+        if (mine !== latest) return;      // superseded while we waited
         box.innerHTML = '';
         (data?.suggestions || []).forEach(s => {
             const div = document.createElement('div');
             div.className = 'autocomplete-suggestion';
             div.textContent = s;
-            div.addEventListener('click', () => { input.value = s; box.innerHTML = ''; if (onSelect) onSelect(s); });
+            div.addEventListener('click', () => {
+                input.value = s;
+                dismiss();
+                // Setting .value in code fires no event, so anything watching
+                // the field has to be told by hand.
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                if (onSelect) onSelect(s);
+            });
             box.appendChild(div);
         });
     });
-    document.addEventListener('click', e => { if (!input.contains(e.target)) box.innerHTML = ''; });
+    document.addEventListener('click', e => { if (!input.contains(e.target)) dismiss(); });
 }

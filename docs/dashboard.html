@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=5">
+    <link rel="stylesheet" href="./styles.css?v=6">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -250,7 +250,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=5"></script>
+<script src="./tabs.js?v=6"></script>
 <script>
 requireAuth();
 
@@ -440,10 +440,9 @@ function toggleSpiritIsland() {
     if (on) fillSpiritIsland();
 }
 document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
-// The autocomplete sets the value directly, which fires no input event.
+// Picking from the dropdown sets .value in code, which fires no input event —
+// setupAutocomplete dispatches change for exactly this reason.
 document.getElementById('game_title').addEventListener('change', toggleSpiritIsland);
-document.getElementById('add_suggestions').addEventListener('click',
-    () => setTimeout(toggleSpiritIsland, 0));
 
 // Log game
 document.getElementById('log-btn').addEventListener('click', async () => {
@@ -498,8 +497,16 @@ function renderGameRow(data, suffix) {
     const esc = v => String(v ?? '')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    // Blank fields are dropped: an empty "Bot score" row is just noise.
-    const play = [['Date', date], ['Result', f('result')], ['Level', f('level')],
+    // The adversary's dial belongs with its name, not on a line of its own.
+    const adversary = f('adversary')
+        ? f('adversary') + (f('adversary_level') ? ` (level ${f('adversary_level')})` : '')
+        : '';
+
+    // Blank fields are dropped: an empty "Bot score" row is just noise, and
+    // the Spirit Island rows stay out of the way of every other game.
+    const play = [['Date', date], ['Result', f('result')],
+                  ['Spirit', f('spirit')], ['Adversary', adversary],
+                  ['Scenario', f('scenario')], ['Level', f('level')],
                   ['My score', f('my_score')], ['Bot score', f('bot_score')]]
                  .filter(([, v]) => v !== '' && v != null);
     const counts = [['Total plays', data.total_times_played],
