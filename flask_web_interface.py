@@ -36,8 +36,27 @@ load_dotenv()
 LOCAL_TZ = ZoneInfo(os.getenv('TIMEZONE', 'Pacific/Auckland'))
 
 
+def user_tz():
+    """The caller's timezone, falling back to the server's.
+
+    Day boundaries are per account, not per server. Auckland is up to 13 hours
+    ahead of UTC, so a single server-wide zone puts an evening game in London
+    on the following day and reports "played today: 0" to someone who just
+    played one.
+    """
+    user = getattr(g, 'user', None) if has_request_context() else None
+    name = (user or {}).get('timezone')
+    if name:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            # An unknown zone shouldn't take the request down with it.
+            app.logger.warning('Unknown timezone %r; using the server default', name)
+    return LOCAL_TZ
+
+
 def today_local():
-    return datetime.now(LOCAL_TZ).date()
+    return datetime.now(user_tz()).date()
 
 # Every play before this date is a bulk backfill of old plays, all stamped
 # 2023-01-01, so it would win every "most ever" record. Records ignore it.
@@ -109,7 +128,8 @@ def load_user(user_id):
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, email, display_name, status, is_owner, token_version
+            SELECT id, email, display_name, status, is_owner, token_version,
+                   timezone
             FROM users WHERE id = %s
         """, (user_id,))
         row = cur.fetchone()
@@ -119,7 +139,8 @@ def load_user(user_id):
     if not row or row[3] != 'active':
         return None
     return {'id': row[0], 'email': row[1], 'display_name': row[2],
-            'status': row[3], 'is_owner': row[4], 'token_version': row[5]}
+            'status': row[3], 'is_owner': row[4], 'token_version': row[5],
+            'timezone': row[6]}
 
 
 def request_user():
@@ -1206,9 +1227,42 @@ again. Do not use this for anything the text can answer.""" if not want_images e
 
 # ── Static-frontend JSON API ──────────────────────────────────────────────────
 
+def valid_timezone(name):
+    """An IANA zone name we can actually use, or None.
+
+    The browser supplies this, so it is checked before it reaches the database
+    — an unknown zone here would break every date calculation for that account.
+    """
+    name = (name or '').strip()
+    if not name or len(name) > 64:
+        return None
+    try:
+        ZoneInfo(name)
+    except Exception:
+        return None
+    return name
+
+
+@app.route('/api/set_timezone', methods=['POST'])
+def api_set_timezone():
+    """Change which zone this account's days are measured in."""
+    name = valid_timezone((request.get_json() or {}).get('timezone'))
+    if not name:
+        return jsonify({'success': False, 'message': 'Unknown timezone.'}), 400
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET timezone = %s WHERE id = %s",
+                (name, current_user()['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'timezone': name})
+
+
 def user_public(user):
     return {'id': user['id'], 'email': user['email'],
-            'display_name': user['display_name'], 'is_owner': user['is_owner']}
+            'display_name': user['display_name'], 'is_owner': user['is_owner'],
+            'timezone': user.get('timezone')}
 
 
 def recent_login_failures(cur, email):
@@ -1295,9 +1349,10 @@ def api_signup():
     cur = conn.cursor()
     try:
         cur.execute("""
-            INSERT INTO users (email, password_hash, display_name, status)
-            VALUES (%s, %s, %s, 'pending')
-        """, (email, generate_password_hash(password), display_name))
+            INSERT INTO users (email, password_hash, display_name, status, timezone)
+            VALUES (%s, %s, %s, 'pending', %s)
+        """, (email, generate_password_hash(password), display_name,
+              valid_timezone(data.get('timezone')) or 'Pacific/Auckland'))
         conn.commit()
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
@@ -1476,7 +1531,34 @@ def api_users():
 # Everything an account owns. Ordered so the tables are emptied before the
 # users row they point at — there are no foreign keys here, so nothing cascades
 # and nothing stops a user row being deleted out from under its own data.
-USER_OWNED_TABLES = ('ai_usage', 'credit_purchases', 'rulebooks', 'games')
+#
+# Anything gaining a user_id has to be added here as well. The sleeping gods
+# tables got theirs in 014, after this list was written, so deleting an account
+# left its campaign behind — rows owned by an id that no longer exists, visible
+# to nobody and never cleaned up. check_owned_tables below now catches that.
+USER_OWNED_TABLES = ('ai_usage', 'credit_purchases', 'rulebooks',
+                     'sleeping_gods', 'sleeping_gods_totems', 'games')
+
+
+def check_owned_tables():
+    """Warn if a table has a user_id that account deletion doesn't clear."""
+    try:
+        conn = raw_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT table_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND column_name = 'user_id'
+        """)
+        owned = {r[0] for r in cur.fetchall()}
+        cur.close()
+        conn.close()
+    except Exception as e:
+        app.logger.warning('Could not check owned tables at startup: %s', e)
+        return
+    missed = sorted(owned - set(USER_OWNED_TABLES))
+    if missed:
+        app.logger.error('DELETING AN ACCOUNT WOULD ORPHAN ROWS IN %s — add them '
+                         'to USER_OWNED_TABLES.', ', '.join(missed))
 
 
 def count_user_data(cur, user_id):
@@ -2645,13 +2727,18 @@ def stripe_webhook():
     elif event['type'] == 'checkout.session.expired':
         conn = raw_db_connection()
         cur = conn.cursor()
-        cur.execute("""
-            UPDATE credit_purchases SET status = 'cancelled'
-            WHERE stripe_session_id = %s AND status = 'pending'
-        """, (event['data']['object']['id'],))
+        # SECURITY DEFINER, for the same reason as the paid path: this request
+        # has no logged-in caller, so the connection carries no app.user_id and
+        # a plain UPDATE matched nothing under RLS — abandoned checkouts stayed
+        # 'pending' for ever.
+        cur.execute("SELECT * FROM credit_mark_cancelled(%s)",
+                    (event['data']['object']['id'],))
+        row = cur.fetchone()
         conn.commit()
         cur.close()
         conn.close()
+        if row:
+            app.logger.info('Cancelled abandoned checkout %s for user %s', row[0], row[1])
 
     return jsonify({'success': True})
 
@@ -2970,6 +3057,7 @@ def api_recent_plays():
 
 # Runs once per worker at boot, after everything it needs is defined.
 check_schema()
+check_owned_tables()
 
 
 if __name__ == '__main__':

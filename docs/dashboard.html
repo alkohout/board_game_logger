@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=10">
+    <link rel="stylesheet" href="./styles.css?v=11">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -267,6 +267,14 @@
 <div class="form-container">
     <h2>Account</h2>
     <p style="color:#ccc; font-size:0.9em;">Signed in as <span id="who">…</span></p>
+
+    <!-- Days are counted in this zone: what "today", "this week" and the
+         records mean depends on it. -->
+    <label>Time zone:</label>
+    <p id="tz-current" style="color:#ccc; font-size:0.85em; margin:0 0 6px;"></p>
+    <button id="tz-btn" style="display:none;"></button>
+    <p id="tz-msg" style="display:none;"></p>
+
     <label>Current password:</label>
     <input type="password" id="pw-current" autocomplete="current-password">
     <label>New password:</label>
@@ -286,7 +294,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=10"></script>
+<script src="./tabs.js?v=11"></script>
 <script>
 requireAuth();
 
@@ -374,6 +382,36 @@ async function loadMe() {
     const me = data?.user;
     if (!me) return;
     document.getElementById('who').textContent = me.display_name || me.email;
+
+    // Days are counted in the account's zone. Offer to correct it when the
+    // browser is somewhere else — someone who moves, or an account created
+    // before this existed and so left on the server default.
+    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const tzBtn = document.getElementById('tz-btn');
+    document.getElementById('tz-current').textContent =
+        `${me.timezone || 'not set'} — days, weeks and records are counted in this zone.`;
+    if (browserTz && me.timezone !== browserTz) {
+        tzBtn.textContent = `Switch to ${browserTz}`;
+        tzBtn.style.display = '';
+        tzBtn.onclick = async () => {
+            tzBtn.disabled = true;
+            const res = await apiPost('/api/set_timezone', { timezone: browserTz });
+            const msg = document.getElementById('tz-msg');
+            msg.style.display = '';
+            if (res?.success) {
+                msg.textContent = 'Saved.';
+                msg.className = 'status-ok';
+                tzBtn.style.display = 'none';
+                document.getElementById('tz-current').textContent =
+                    `${res.timezone} — days, weeks and records are counted in this zone.`;
+                loadStats();
+            } else {
+                msg.textContent = res?.message || 'Could not save.';
+                msg.className = 'status-err';
+                tzBtn.disabled = false;
+            }
+        };
+    }
 
     // A tracker button per game this account has actually played.
     document.getElementById('tracker-nav').innerHTML = (data.trackers || []).map(t =>
