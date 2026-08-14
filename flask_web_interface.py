@@ -86,10 +86,14 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB upload limit
 app.secret_key = os.getenv('SECRET_KEY')
 
+# DELETE is here because deleting an account uses it. A method missing from
+# this list isn't rejected by the server — the browser never sends it, because
+# the preflight comes back without permission, so the button silently does
+# nothing. cors_test keeps this in step with the methods the routes expose.
 CORS(app,
      origins=["https://alkohout.github.io", "http://localhost:5500", "http://127.0.0.1:5500", "http://localhost:3000"],
      allow_headers=["Authorization", "Content-Type"],
-     methods=["GET", "POST", "OPTIONS"])
+     methods=["GET", "POST", "OPTIONS", "DELETE"])
 
 
 # ── Accounts and sessions ─────────────────────────────────────────────────────
