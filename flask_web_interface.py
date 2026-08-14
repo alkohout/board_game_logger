@@ -98,8 +98,14 @@ def issue_token(user_id, token_version):
 
 
 def load_user(user_id):
-    """Fetch a user by id. Returns None for unknown, pending or disabled accounts."""
-    conn = get_db_connection()
+    """Fetch a user by id. Returns None for unknown, pending or disabled accounts.
+
+    Deliberately unstamped: `users` carries no row-level security, and this runs
+    before the caller is known, so stamping here only wrote an empty scope that
+    the route then immediately overwrote — two round trips to a database three
+    time zones away, on every single request.
+    """
+    conn = raw_db_connection()
     try:
         cur = conn.cursor()
         cur.execute("""
