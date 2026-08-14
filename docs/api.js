@@ -77,12 +77,24 @@ function setupAutocomplete(inputId, suggestionsId, onSelect) {
     // which is why a fast typist saw the dropdown reopen several times over.
     // Bumping `latest` invalidates everything outstanding.
     let latest = 0;
-    const dismiss = () => { latest++; box.innerHTML = ''; };
+    let timer = null;
+    const dismiss = () => { latest++; clearTimeout(timer); box.innerHTML = ''; };
 
-    input.addEventListener('input', async () => {
-        const mine = ++latest;
+    // Wait for a pause in typing before asking. Firing per keystroke sent six
+    // requests for a six-letter game, and with only two server workers the one
+    // that mattered — the last — queued behind its own predecessors. One
+    // request after you stop typing is both fewer and sooner.
+    const DEBOUNCE_MS = 200;
+
+    input.addEventListener('input', () => {
+        clearTimeout(timer);
         const term = input.value.trim();
-        if (term.length < 2) { box.innerHTML = ''; return; }
+        if (term.length < 2) { latest++; box.innerHTML = ''; return; }
+        timer = setTimeout(() => search(term), DEBOUNCE_MS);
+    });
+
+    async function search(term) {
+        const mine = ++latest;
         const data = await apiGet('/search_games?term=' + encodeURIComponent(term));
         if (mine !== latest) return;      // superseded while we waited
         box.innerHTML = '';
@@ -100,6 +112,7 @@ function setupAutocomplete(inputId, suggestionsId, onSelect) {
             });
             box.appendChild(div);
         });
-    });
+    }
+
     document.addEventListener('click', e => { if (!input.contains(e.target)) dismiss(); });
 }

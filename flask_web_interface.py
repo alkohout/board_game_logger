@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify, g, has_request_context
 from flask_cors import CORS
 import psycopg2
+import psycopg2.pool
+import threading
 import os
 import random
 import re
@@ -218,8 +220,8 @@ def api_root():
                     'site': 'https://alkohout.github.io/board_game_logger/'})
 
 
-def raw_db_connection():
-    """A connection with no identity attached. Only auth and migrations want this."""
+def _connection_settings():
+    """Where and as whom to connect. Shared by the pool and by direct opens."""
     database_url = os.getenv('DATABASE_URL')
     if database_url:
         override_user = os.getenv('DB_USER')
@@ -236,13 +238,105 @@ def raw_db_connection():
                 netloc += ':{}'.format(parts.port)
             database_url = urlunsplit((parts.scheme, netloc, parts.path,
                                        parts.query, parts.fragment))
-        return psycopg2.connect(database_url)
-    return psycopg2.connect(
+        return (database_url,), {}
+    return (), dict(
         host="localhost",
         database="boardgames",
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("PASSWORD")
     )
+
+
+# Opening a connection to a hosted database three time zones away costs about
+# 1.3 seconds — a TLS handshake is several round trips and each one is ~200ms.
+# Every request was paying that twice, once to read the caller's token and once
+# for the query itself, so a keystroke in the autocomplete cost about four
+# seconds before any work happened. Connections are kept and reused instead.
+_POOL = None
+_POOL_LOCK = threading.Lock()
+POOL_MIN = int(os.getenv('DB_POOL_MIN', '1'))
+POOL_MAX = int(os.getenv('DB_POOL_MAX', '4'))
+
+
+def _pool():
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                args, kwargs = _connection_settings()
+                # Without keepalives an idle connection is dropped somewhere in
+                # the middle and only fails when it's next used.
+                kwargs = dict(kwargs, keepalives=1, keepalives_idle=30,
+                              keepalives_interval=10, keepalives_count=3)
+                _POOL = psycopg2.pool.ThreadedConnectionPool(
+                    POOL_MIN, POOL_MAX, *args, **kwargs)
+    return _POOL
+
+
+class PooledConnection:
+    """A pooled connection that goes back to the pool when closed.
+
+    Every route already calls conn.close(), so returning rather than closing
+    keeps the call sites unchanged. Anything left set on the session is cleared
+    on the way back — a reused connection must never carry one caller's
+    app.user_id into the next caller's request.
+    """
+
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+        self._closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._conn.rollback()
+            cur = self._conn.cursor()
+            cur.execute("SELECT set_config('app.user_id', '', false)")
+            cur.close()
+            self._conn.commit()
+            self._pool.putconn(self._conn)
+        except Exception:
+            # A connection that can't be cleaned up is not safe to hand on.
+            try:
+                self._pool.putconn(self._conn, close=True)
+            except Exception:
+                pass
+
+
+def raw_db_connection():
+    """A connection with no identity attached. Only auth and migrations want this."""
+    # Migrations and one-off scripts run outside a request and should not be
+    # holding pool slots; they get a plain connection.
+    if not has_request_context():
+        args, kwargs = _connection_settings()
+        return psycopg2.connect(*args, **kwargs)
+
+    pool = _pool()
+    for _ in range(POOL_MAX + 1):
+        conn = pool.getconn()
+        if conn.closed:
+            pool.putconn(conn, close=True)
+            continue
+        try:
+            # Cheap liveness check: a pooled connection may have been dropped
+            # while idle, and we would rather find out here than mid-route.
+            cur = conn.cursor()
+            cur.execute('SELECT 1')
+            cur.close()
+            conn.rollback()
+        except Exception:
+            pool.putconn(conn, close=True)
+            continue
+        return PooledConnection(pool, conn)
+    # Pool exhausted or every connection dead — fall back to a fresh one.
+    args, kwargs = _connection_settings()
+    return psycopg2.connect(*args, **kwargs)
 
 
 def get_db_connection():
@@ -255,11 +349,16 @@ def get_db_connection():
     """
     conn = raw_db_connection()
     user = getattr(g, 'user', None) if has_request_context() else None
-    if user:
-        cur = conn.cursor()
-        cur.execute("SELECT set_config('app.user_id', %s, false)", (str(user['id']),))
-        cur.close()
-        conn.commit()
+    # Always set it, including to '' when there is no caller. With a fresh
+    # connection per request an unset value meant "match nothing", which was
+    # safe by accident; on a pooled connection it would mean "whatever the
+    # previous request left there". NULLIF('','') is NULL, so the policy still
+    # matches nothing — but now it says so explicitly.
+    cur = conn.cursor()
+    cur.execute("SELECT set_config('app.user_id', %s, false)",
+                (str(user['id']) if user else '',))
+    cur.close()
+    conn.commit()
     return conn
 
 
