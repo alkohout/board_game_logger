@@ -1262,9 +1262,88 @@ def api_users():
               'is_owner': r[4], 'created_at': r[5].isoformat() if r[5] else None,
               'approved_at': r[6].isoformat() if r[6] else None}
              for r in cur.fetchall()]
+
+    # What each account owns, so "Delete" can say what it is about to destroy
+    # instead of asking for a blind yes.
+    for u in users:
+        u['data'] = count_user_data(cur, u['id'])
+    # count_user_data leaves the policy pointing at the last user inspected.
+    cur.execute("SELECT set_config('app.user_id', %s, true)", (str(current_user()['id']),))
+
     cur.close()
     conn.close()
     return jsonify({'success': True, 'users': users})
+
+
+# Everything an account owns. Ordered so the tables are emptied before the
+# users row they point at — there are no foreign keys here, so nothing cascades
+# and nothing stops a user row being deleted out from under its own data.
+USER_OWNED_TABLES = ('ai_usage', 'credit_purchases', 'rulebooks', 'games')
+
+
+def count_user_data(cur, user_id):
+    """How many rows an account owns.
+
+    Row-level security hides other accounts' rows even from the owner, so
+    counting someone else's data means pointing the policy at them for the
+    duration. Transaction-scoped, so it reverts on commit.
+    """
+    cur.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+    counts = {}
+    for table in USER_OWNED_TABLES:
+        cur.execute(f'SELECT count(*) FROM {table} WHERE user_id = %s', (user_id,))
+        counts[table] = cur.fetchone()[0]
+    return counts
+
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+def api_delete_user(user_id):
+    """Remove an account and everything it owns. There is no undo."""
+    denied = owner_only()
+    if denied:
+        return denied
+    me = current_user()
+    if user_id == me['id']:
+        return jsonify({'success': False,
+                        'message': "You can't delete your own account."}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT is_owner, email FROM users WHERE id = %s", (user_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        return jsonify({'success': False, 'message': 'No such user.'}), 404
+    if row[0]:
+        cur.close(); conn.close()
+        return jsonify({'success': False,
+                        'message': "The owner account can't be deleted."}), 400
+    email = row[1]
+
+    try:
+        deleted = {}
+        # Both guards on purpose: set_config satisfies the RLS policy, and the
+        # WHERE clause means a delete still can't run away if that policy is
+        # ever loosened. A bare DELETE trusting RLS alone is one migration away
+        # from emptying the table.
+        cur.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+        for table in USER_OWNED_TABLES:
+            cur.execute(f'DELETE FROM {table} WHERE user_id = %s', (user_id,))
+            deleted[table] = cur.rowcount
+        cur.execute("DELETE FROM users WHERE id = %s AND NOT is_owner", (user_id,))
+        if cur.rowcount != 1:
+            raise ValueError('user row not removed')
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close(); conn.close()
+        app.logger.exception('Deleting user %s failed', user_id)
+        return jsonify({'success': False, 'message': f'Delete failed: {e}'}), 500
+
+    cur.close()
+    conn.close()
+    app.logger.info('Deleted account %s (%s) and %s', user_id, email, deleted)
+    return jsonify({'success': True, 'email': email, 'deleted': deleted})
 
 
 @app.route('/api/users/<int:user_id>/status', methods=['POST'])

@@ -73,11 +73,20 @@
                     if (u.status !== 'disabled') {
                         actions += `<button class="btn-red" data-id="${u.id}" data-status="disabled">Disable</button>`;
                     }
+                    actions += `<button class="btn-red" data-del="${u.id}"
+                                        data-email="${esc(u.email)}">Delete</button>`;
                 }
+                // Say what the account holds, so Delete isn't a blind yes.
+                const owns = Object.entries(u.data || {})
+                    .filter(([, n]) => n > 0)
+                    .map(([t, n]) => `${n} ${t.replace('_', ' ')}`);
+                const holdings = owns.length
+                    ? `<div class="user-meta">holds ${owns.join(', ')}</div>` : '';
                 return `<div class="user">
                     <div><span class="user-email">${esc(u.display_name || u.email)}</span>${badge}</div>
                     <div class="user-meta">${esc(u.email)} — requested ${when(u.created_at)}${
                         u.approved_at ? `, approved ${when(u.approved_at)}` : ''}</div>
+                    ${holdings}
                     ${actions}
                 </div>`;
             }).join('');
@@ -89,6 +98,34 @@
                     btn.disabled = true;
                     const res = await apiPost(`/api/users/${btn.dataset.id}/status`, { status });
                     if (!res?.success) alert(res?.message || 'Failed.');
+                    load();
+                });
+            });
+
+            list.querySelectorAll('button[data-del]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const email = btn.dataset.email;
+                    const u = data.users.find(x => String(x.id) === btn.dataset.del);
+                    const owns = Object.entries(u?.data || {})
+                        .filter(([, n]) => n > 0)
+                        .map(([t, n]) => `  ${n} ${t.replace('_', ' ')}`);
+                    // Disable is the reversible one; this isn't, so it asks for
+                    // the address rather than an OK that's easy to hit by reflex.
+                    const typed = prompt(
+                        `Permanently delete ${email}?\n\n` +
+                        (owns.length ? `This also destroys:\n${owns.join('\n')}\n\n`
+                                     : 'This account holds no data.\n\n') +
+                        'There is no undo — Disable is the reversible option.\n' +
+                        'Type the email address to confirm:');
+                    if (typed === null) return;
+                    if (typed.trim().toLowerCase() !== email.toLowerCase()) {
+                        alert('That did not match — nothing was deleted.');
+                        return;
+                    }
+                    btn.disabled = true;
+                    const res = await apiFetch(`/api/users/${btn.dataset.del}`, { method: 'DELETE' });
+                    const out = res ? await res.json() : null;
+                    if (!out?.success) alert(out?.message || 'Delete failed.');
                     load();
                 });
             });
