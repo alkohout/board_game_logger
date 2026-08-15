@@ -1976,6 +1976,27 @@ STUCK_AFTER_LOSSES = 3
 ADVERSARY_LEVELS = [1, 2, 3, 4, 5, 6]
 
 
+def adversary_grids_by(plays, field):
+    """One adversary grid per spirit, or per scenario.
+
+    Scenarios combine with adversaries — "Blitz against England 3" is as much
+    a setup as either on its own — so both get the same treatment. Only values
+    actually taken against an adversary are included: twenty-eight empty grids
+    would bury the one with something in it.
+    """
+    used = [v for v in (p[field] for p in plays if p['adversary']) if v]
+    out = []
+    for value in dict.fromkeys(used):
+        mine = [p for p in plays if p[field] == value]
+        out.append({
+            'name': value,
+            'groups': adversary_grid(mine),
+            **_tally([p for p in mine if p['adversary']]),
+        })
+    out.sort(key=lambda s: (-s['plays'], s['name']))
+    return out
+
+
 def adversary_grid(plays):
     """Each adversary against each of its six levels.
 
@@ -2307,17 +2328,8 @@ def api_spirit_island_stats():
     cur.close()
     conn.close()
 
-    # A grid per spirit, but only for spirits actually taken against an
-    # adversary — 28 empty grids would bury the one that has anything in it.
-    played_against = [s for s in (p['spirit'] for p in plays if p['adversary'])
-                      if s]
-    by_spirit = [
-        {'spirit': spirit,
-         'groups': adversary_grid([p for p in plays if p['spirit'] == spirit]),
-         **_tally([p for p in plays if p['spirit'] == spirit and p['adversary']])}
-        for spirit in dict.fromkeys(played_against)
-    ]
-    by_spirit.sort(key=lambda s: -s['plays'])
+    by_spirit = adversary_grids_by(plays, 'spirit')
+    by_scenario = adversary_grids_by(plays, 'scenario')
 
     recorded = sum(1 for p in plays
                    if p['spirit'] or p['adversary'] or p['scenario'])
@@ -2328,6 +2340,7 @@ def api_spirit_island_stats():
         'adversary_grid': adversary_grid(plays),
         'adversary_levels': ADVERSARY_LEVELS,
         'adversary_by_spirit': by_spirit,
+        'adversary_by_scenario': by_scenario,
         'stuck_after_losses': STUCK_AFTER_LOSSES,
         'scenarios': spirit_island_group(
             SPIRIT_ISLAND_SCENARIOS, plays, 'scenario', by_spirit=True),

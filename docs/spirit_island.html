@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Spirit Island Stats</title>
-    <link rel="stylesheet" href="./styles.css?v=12">
+    <link rel="stylesheet" href="./styles.css?v=13">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -81,7 +81,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=12"></script>
+    <script src="./tabs.js?v=13"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -185,20 +185,21 @@
                 <span><span class="cell cell-stuck">0–${data.stuck_after_losses}</span>
                       ${data.stuck_after_losses}+ losses and no win — maybe move on</span></p>`;
 
-            let out = `<h3 style="margin:22px 0 2px;">Adversaries</h3>` +
-                      gridTable(data.adversary_grid, levels) + legend;
+            return `<h3 style="margin:22px 0 2px;">Adversaries</h3>` +
+                   gridTable(data.adversary_grid, levels) + legend;
+        }
 
-            // Per spirit, for spirits actually taken against an adversary.
-            const per = data.adversary_by_spirit || [];
-            if (per.length) {
-                out += `<h3 style="margin:22px 0 2px;">By spirit</h3>
-                        <p class="caption">Only spirits you've taken against an adversary.</p>`;
-                out += per.map(s => `<div class="spirit-block">
-                        <h4>${esc(s.spirit)} <span class="spirit-count">${s.won}W ${s.lost}L
-                            over ${s.plays} ${s.plays === 1 ? 'play' : 'plays'}</span></h4>
-                        ${gridTable(s.groups, levels)}</div>`).join('');
-            }
-            return out;
+        // The same grid, split by whatever you took into the fight. Only drawn
+        // for values actually played against an adversary — an empty grid per
+        // unplayed spirit would bury the ones that mean something.
+        function gridsBy(title, blurb, entries, levels) {
+            if (!entries || !entries.length) return '';
+            return `<h3 style="margin:22px 0 2px;">${esc(title)}</h3>
+                    <p class="caption">${esc(blurb)}</p>` +
+                entries.map(e => `<div class="spirit-block">
+                        <h4>${esc(e.name)} <span class="spirit-count">${e.won}W ${e.lost}L
+                            over ${e.plays} ${e.plays === 1 ? 'play' : 'plays'}</span></h4>
+                        ${gridTable(e.groups, levels)}</div>`).join('');
         }
 
         async function load() {
@@ -221,9 +222,17 @@
             // Adversaries first — that's where the decision "keep trying this
             // or move on" gets made. Spirits last: it's a completion list, not
             // something consulted before a game.
+            const levels = data.adversary_levels || [1, 2, 3, 4, 5, 6];
             body.innerHTML =
                 gridSection(data) +
+                gridsBy('By spirit', "Only spirits you've taken against an adversary.",
+                        data.adversary_by_spirit, levels) +
                 section('Scenarios', data.scenarios) +
+                // A scenario played against an adversary is its own setup —
+                // "Blitz vs England 3" — so it gets the same grid.
+                gridsBy('Scenarios against adversaries',
+                        "Only scenarios you've played with an adversary in the mix.",
+                        data.adversary_by_scenario, levels) +
                 section('Spirits', data.spirits) +
                 gap;
         }
