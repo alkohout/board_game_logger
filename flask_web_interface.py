@@ -1969,6 +1969,46 @@ def _best_level(rows):
     return max(levels) if levels else None
 
 
+# Losses at one setup with nothing to show for them. Not a rule, a nudge: the
+# point of the page is partly to notice when to stop banging at the same wall.
+STUCK_AFTER_LOSSES = 3
+
+ADVERSARY_LEVELS = [1, 2, 3, 4, 5, 6]
+
+
+def adversary_grid(plays):
+    """Each adversary against each of its six levels.
+
+    A setup is an adversary at a level, so that is what the table is made of —
+    a flat per-adversary tally hides that five losses at level 3 and a win at
+    level 1 are different situations.
+    """
+    groups = []
+    for product, name in SPIRIT_ISLAND_ADVERSARIES:
+        key = name.lower()
+        rows = [p for p in plays if (p['adversary'] or '').lower() == key]
+        cells = []
+        for level in ADVERSARY_LEVELS:
+            at = [p for p in rows if p['adversary_level'] == level]
+            tally = _tally(at)
+            cells.append({
+                'level': level, **tally,
+                # Losses with no win here yet: the "maybe try something else"
+                # signal, and the reason losses are counted separately at all.
+                'stuck': tally['lost'] >= STUCK_AFTER_LOSSES and tally['won'] == 0,
+            })
+        # Plays whose level was never written down still belong to the
+        # adversary; they just can't sit in a column.
+        no_level = _tally([p for p in rows if not p['adversary_level']])
+        if not groups or groups[-1]['product'] != product:
+            groups.append({'product': product, 'items': []})
+        groups[-1]['items'].append({
+            'name': name, 'cells': cells, 'best_level': _best_level(rows),
+            'no_level': no_level, **_tally(rows),
+        })
+    return groups
+
+
 def spirit_island_group(entries, plays, field, by_spirit=False):
     """Won/lost per named thing, grouped by the product it came in.
 
@@ -2267,12 +2307,28 @@ def api_spirit_island_stats():
     cur.close()
     conn.close()
 
+    # A grid per spirit, but only for spirits actually taken against an
+    # adversary — 28 empty grids would bury the one that has anything in it.
+    played_against = [s for s in (p['spirit'] for p in plays if p['adversary'])
+                      if s]
+    by_spirit = [
+        {'spirit': spirit,
+         'groups': adversary_grid([p for p in plays if p['spirit'] == spirit]),
+         **_tally([p for p in plays if p['spirit'] == spirit and p['adversary']])}
+        for spirit in dict.fromkeys(played_against)
+    ]
+    by_spirit.sort(key=lambda s: -s['plays'])
+
     recorded = sum(1 for p in plays
                    if p['spirit'] or p['adversary'] or p['scenario'])
     return jsonify({
         'spirits': spirit_island_group(SPIRIT_ISLAND_SPIRITS, plays, 'spirit'),
         'adversaries': spirit_island_group(
             SPIRIT_ISLAND_ADVERSARIES, plays, 'adversary', by_spirit=True),
+        'adversary_grid': adversary_grid(plays),
+        'adversary_levels': ADVERSARY_LEVELS,
+        'adversary_by_spirit': by_spirit,
+        'stuck_after_losses': STUCK_AFTER_LOSSES,
         'scenarios': spirit_island_group(
             SPIRIT_ISLAND_SCENARIOS, plays, 'scenario', by_spirit=True),
         'total_plays': len(plays),

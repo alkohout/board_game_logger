@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Spirit Island Stats</title>
-    <link rel="stylesheet" href="./styles.css?v=11">
+    <link rel="stylesheet" href="./styles.css?v=12">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -35,6 +35,32 @@
         .with::before { content: '· '; color: #666; }
         .caption { color: #ccc; font-size: 0.9em; margin: 0 0 4px; }
         .aside { color: #888; font-size: 0.8em; margin: 10px 0 0; }
+
+        /* Adversary x level grid. Seven columns won't fit a phone, so the
+           table scrolls inside its own box rather than the page doing it. */
+        .grid-wrap { overflow-x: auto; margin: 6px 0 4px; }
+        table.grid { border-collapse: collapse; width: 100%; min-width: 340px; }
+        table.grid th, table.grid td { padding: 5px 4px; text-align: center; }
+        table.grid th { font-size: 0.75em; color: #aaa; font-weight: normal; }
+        table.grid td.name, table.grid th.name {
+            text-align: left; white-space: nowrap; padding-right: 10px;
+            font-size: 0.88em;
+        }
+        table.grid tbody tr { border-bottom: 1px solid rgba(255,255,255,0.07); }
+        .cell {
+            font-variant-numeric: tabular-nums; font-size: 0.85em;
+            min-width: 34px; border-radius: 3px;
+        }
+        .cell-none { color: #555; }                       /* never attempted */
+        .cell-won  { background: rgba(144,238,144,0.16); color: #90EE90; }
+        .cell-open { background: rgba(255,213,79,0.13); color: #FFD54F; }  /* tried, no win */
+        .cell-stuck{ background: rgba(255,138,128,0.20); color: #FF8A80; font-weight: bold; }
+        .grid-legend { color: #888; font-size: 0.78em; margin: 2px 0 14px; }
+        .grid-legend span { margin-right: 12px; white-space: nowrap; }
+        .spirit-block { margin-top: 16px; }
+        .spirit-block h4 { margin: 0 0 2px; font-size: 0.95em; color: #fff; }
+        .no-level { color: #888; font-size: 0.78em; }
+        .spirit-count { color: #aaa; font-size: 0.8em; font-weight: normal; }
     </style>
 </head>
 <body>
@@ -55,7 +81,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=11"></script>
+    <script src="./tabs.js?v=12"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -119,6 +145,62 @@
                 </table>`;
         }
 
+        // One cell of the adversary grid: how a given adversary at a given
+        // level has gone. Won-lost rather than a tick, because "beaten once
+        // after five attempts" and "beaten first go" are different facts.
+        function gridCell(cell) {
+            if (!cell.plays) return '<td class="cell cell-none">·</td>';
+            const cls = cell.stuck ? 'cell-stuck' : cell.won ? 'cell-won' : 'cell-open';
+            return `<td class="cell ${cls}" title="${cell.won} won, ${cell.lost} lost, ${cell.plays} played">
+                        ${cell.won}–${cell.lost}</td>`;
+        }
+
+        function gridTable(groups, levels) {
+            const head = '<tr><th class="name"></th>' +
+                levels.map(l => `<th>L${l}</th>`).join('') +
+                '<th>Best</th></tr>';
+            const body = groups.map(g => {
+                const rows = g.items.map(it => {
+                    const extra = it.no_level.plays
+                        ? `<span class="no-level"> +${it.no_level.plays} no level</span>` : '';
+                    return `<tr>
+                        <td class="name${it.plays ? '' : ' cell-none'}">${esc(it.name)}${extra}</td>
+                        ${it.cells.map(gridCell).join('')}
+                        <td class="cell">${it.best_level ? 'L' + it.best_level : ''}</td>
+                    </tr>`;
+                }).join('');
+                return `<tr class="exp-row"><td colspan="${levels.length + 2}">${esc(g.product)}</td></tr>${rows}`;
+            }).join('');
+            return `<div class="grid-wrap"><table class="grid">
+                        <thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+        }
+
+        function gridSection(data) {
+            const levels = data.adversary_levels || [1, 2, 3, 4, 5, 6];
+            const legend = `<p class="grid-legend">
+                <span>Each cell is won–lost at that level.</span>
+                <span><span class="cell cell-none">·</span> never tried</span>
+                <span><span class="cell cell-open">0–1</span> tried, no win yet</span>
+                <span><span class="cell cell-won">1–0</span> beaten</span>
+                <span><span class="cell cell-stuck">0–${data.stuck_after_losses}</span>
+                      ${data.stuck_after_losses}+ losses and no win — maybe move on</span></p>`;
+
+            let out = `<h3 style="margin:22px 0 2px;">Adversaries</h3>` +
+                      gridTable(data.adversary_grid, levels) + legend;
+
+            // Per spirit, for spirits actually taken against an adversary.
+            const per = data.adversary_by_spirit || [];
+            if (per.length) {
+                out += `<h3 style="margin:22px 0 2px;">By spirit</h3>
+                        <p class="caption">Only spirits you've taken against an adversary.</p>`;
+                out += per.map(s => `<div class="spirit-block">
+                        <h4>${esc(s.spirit)} <span class="spirit-count">${s.won}W ${s.lost}L
+                            over ${s.plays} ${s.plays === 1 ? 'play' : 'plays'}</span></h4>
+                        ${gridTable(s.groups, levels)}</div>`).join('');
+            }
+            return out;
+        }
+
         async function load() {
             const data = await apiGet('/api/spirit_island_stats');
             const body = document.getElementById('body');
@@ -136,10 +218,13 @@
                      scenario, so they appear in no table above. Newly logged plays will.</p>`
                 : '';
 
+            // Adversaries first — that's where the decision "keep trying this
+            // or move on" gets made. Spirits last: it's a completion list, not
+            // something consulted before a game.
             body.innerHTML =
-                section('Spirits', data.spirits) +
-                section('Adversaries', data.adversaries, { showBest: true }) +
+                gridSection(data) +
                 section('Scenarios', data.scenarios) +
+                section('Spirits', data.spirits) +
                 gap;
         }
         load();
