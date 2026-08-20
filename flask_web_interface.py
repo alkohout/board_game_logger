@@ -206,7 +206,7 @@ EXPECTED_COLUMNS = {
     # deployed ahead of migration 012 would fail to log any game at all.
     'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario',
               'civilisation', 'my_civilisation', 'zoo_map', 'start_appeal',
-              'difficulty', 'scenario_number', 'ares_temp_me', 'ares_temp_bot'),
+              'scenario_number', 'ares_temp_me', 'ares_temp_bot'),
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
@@ -1792,17 +1792,16 @@ def api_add_game():
         cur.execute(
             "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score,"
             " spirit, adversary, adversary_level, scenario, civilisation,"
-            " my_civilisation, zoo_map, start_appeal, difficulty,"
+            " my_civilisation, zoo_map, start_appeal,"
             " scenario_number, ares_temp_me, ares_oxygen_me, ares_oceans_me,"
             " ares_mc_me, ares_temp_bot, ares_oxygen_bot, ares_oceans_bot,"
             " ares_mc_bot)"
-            " VALUES (" + ",".join(["%s"] * 25) + ")",
+            " VALUES (" + ",".join(["%s"] * 24) + ")",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
              spirit, adversary, level, scenario, imperium_civilisation(data),
              imperium_my_civilisation(data), *ark_nova_fields(data),
-             difficulty_value(data), scenario_number_value(data),
-             *ares_fields(data))
+             scenario_number_value(data), *ares_fields(data))
         )
         conn.commit()
         cur.close()
@@ -2170,43 +2169,15 @@ def sleeping_gods_category(name):
 
 
 
-# Difficulty is deliberately open. Games disagree on the words — Century says
-# Standard where Earth says Normal — and a closed list would reject whichever
-# game came next. The form suggests what has been used before instead.
-def difficulty_value(data):
-    value = (data.get('difficulty') or '').strip()
-    return value[:40] or None
-
-
 def scenario_number_value(data):
+    """A rung on a numbered ladder — Cascadia's scenarios, and anything like
+    them. Out-of-range values are dropped rather than stored."""
     value = data.get('scenario_number')
     try:
         value = int(value) if str(value or '').strip() else None
     except (TypeError, ValueError):
         return None
     return value if value is not None and 1 <= value <= 999 else None
-
-
-@app.route('/api/difficulty_options')
-def api_difficulty_options():
-    """Difficulties this account has used, commonest first.
-
-    Read back from the plays rather than kept in a list, so it learns the
-    words you actually use without anyone maintaining it.
-    """
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""SELECT difficulty, count(*) FROM games
-                   WHERE difficulty IS NOT NULL
-                   GROUP BY 1 ORDER BY 2 DESC, 1""")
-    used = [r[0] for r in cur.fetchall()]
-    cur.close()
-    conn.close()
-    # A few common ones so the very first game still gets suggestions.
-    for fallback in ('Easy', 'Normal', 'Standard', 'Hard', 'Expert'):
-        if fallback not in used:
-            used.append(fallback)
-    return jsonify({'difficulties': used})
 
 
 CASCADIA_MATCH = '%cascadia%'
@@ -2353,7 +2324,7 @@ def api_ares_stats():
     """
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""SELECT date_played, result, difficulty,
+    cur.execute("""SELECT date_played, result, level,
                           ares_temp_me, ares_oxygen_me, ares_oceans_me, ares_mc_me,
                           ares_temp_bot, ares_oxygen_bot, ares_oceans_bot, ares_mc_bot,
                           notes
@@ -2379,7 +2350,8 @@ def api_ares_stats():
                              / len(ARES_PARAMS))
         games.append({
             'date': r[0].isoformat(), 'won': 'won' in result,
-            'difficulty': r[2], 'me': me, 'bot': bot,
+            # Grouping key for the charts: whatever was written in level.
+            'level': (r[2] or '').strip() or None, 'me': me, 'bot': bot,
             'progress': progress, 'notes': r[11] or '',
         })
 
@@ -2579,7 +2551,7 @@ def spirit_island_fields(data):
 PLAY_COLUMNS = ('id', 'date_played', 'game_title', 'result', 'level', 'my_score',
                 'bot_score', 'notes', 'spirit', 'adversary', 'adversary_level',
                 'scenario', 'civilisation', 'my_civilisation', 'zoo_map',
-                'start_appeal', 'difficulty', 'scenario_number',
+                'start_appeal', 'scenario_number',
                 'ares_temp_me', 'ares_oxygen_me', 'ares_oceans_me', 'ares_mc_me',
                 'ares_temp_bot', 'ares_oxygen_bot', 'ares_oceans_bot', 'ares_mc_bot')
 
@@ -2701,8 +2673,7 @@ def api_update_play():
                              spirit = %s, adversary = %s, adversary_level = %s,
                              scenario = %s, civilisation = %s,
                              my_civilisation = %s, zoo_map = %s,
-                             start_appeal = %s, difficulty = %s,
-                             scenario_number = %s,
+                             start_appeal = %s, scenario_number = %s,
                              ares_temp_me = %s, ares_oxygen_me = %s,
                              ares_oceans_me = %s, ares_mc_me = %s,
                              ares_temp_bot = %s, ares_oxygen_bot = %s,
@@ -2712,8 +2683,8 @@ def api_update_play():
               data.get('my_score', ''), data.get('bot_score', ''), data.get('notes', ''),
               spirit, adversary, level, scenario,
               imperium_civilisation(data), imperium_my_civilisation(data),
-              *ark_nova_fields(data), difficulty_value(data),
-              scenario_number_value(data), *ares_fields(data), play_id))
+              *ark_nova_fields(data), scenario_number_value(data),
+              *ares_fields(data), play_id))
         if cur.rowcount != 1:
             conn.rollback()
             cur.close(); conn.close()
@@ -3591,8 +3562,7 @@ def api_recent_plays():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT date_played, game_title, result, level, my_score, bot_score, notes,
-               difficulty
+        SELECT date_played, game_title, result, level, my_score, bot_score, notes
         FROM games
         ORDER BY date_played DESC, id DESC
         LIMIT 5
@@ -3608,7 +3578,6 @@ def api_recent_plays():
         'my_score': r[4] or '',
         'bot_score': r[5] or '',
         'notes': r[6] or '',
-        'difficulty': r[7] or '',
     } for r in rows])
 
 

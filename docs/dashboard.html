@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=28">
+    <link rel="stylesheet" href="./styles.css?v=29">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -164,10 +164,9 @@
         <input type="number" id="start_appeal" min="0" max="100" step="1"
                placeholder="e.g. 15" inputmode="numeric">
     </div>
-    <label>Difficulty:</label>
-    <input type="text" id="difficulty" list="difficulty-list" autocomplete="off"
-           placeholder="Easy, Normal, Expert…">
-    <datalist id="difficulty-list"></datalist>
+    <label>Level:</label>
+    <textarea id="level" rows="2"
+              placeholder="Expert, Scenario 8, Map A start 15…"></textarea>
     <!-- Ares Expedition: a finished game is described by where the three
          global parameters ended up, for you and the bot. A grid, because eight
          stacked number boxes would be miserable to fill in. -->
@@ -241,7 +240,7 @@
 
     <h2>Recent Plays</h2>
     <table id="recent-table">
-        <thead><tr><th style="width:55px">Date</th><th>Game</th><th style="width:80px">Result</th><th style="width:70px">Difficulty</th></tr></thead>
+        <thead><tr><th style="width:55px">Date</th><th>Game</th><th style="width:80px">Result</th><th style="width:60px">Level</th></tr></thead>
         <tbody id="recent-body"><tr><td colspan="4" style="color:#aaa;">Loading...</td></tr></tbody>
     </table>
 </div>
@@ -385,7 +384,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=28"></script>
+<script src="./tabs.js?v=29"></script>
 <script>
 requireAuth();
 
@@ -571,14 +570,13 @@ async function loadRecentPlays() {
         <td style="white-space:nowrap">${fmtDate(r.date_played)}</td>
         <td>${r.game_title}</td>
         <td>${r.result}</td>
-        <td>${escapeHtml(r.difficulty || r.level || '')}</td>
+        <td>${escapeHtml(r.level || '')}</td>
     </tr>`).join('');
 }
 loadRecentPlays();
 
 // Autocompletes
 setupAutocomplete('game_title', 'add_suggestions');
-fillDifficulty();
 // Picking a title from the dropdown looks the game up straight away.
 setupAutocomplete('search_title', 'search_suggestions', () => lookUpGame());
 setupAutocomplete('selector_game_title', 'selector_suggestions');
@@ -592,7 +590,6 @@ const LADDER_FIELDS = ['scenario_number'];
 // Only your side is recorded. The other column is the win condition, which is
 // fixed at 8 C / 14% / 9 oceans and was only ever being restated.
 const ARES_FIELDS = ['temp', 'oxygen', 'oceans', 'mc'].map(k => `ares_${k}_me`);
-let diffLoaded = false;
 let siLoaded = false;
 let impLoaded = false;
 let IMP_DEFAULT_SIDE = 'Romans';
@@ -624,18 +621,6 @@ function scoresAreRedundant(title) {
 
 function isLadderGame(title) {
     return /cascadia|northwood/i.test(title);
-}
-
-// Difficulty suggestions come from what this account has already used, so the
-// list teaches itself rather than being maintained by hand.
-async function fillDifficulty() {
-    if (diffLoaded) return;
-    const opts = await apiGet('/api/difficulty_options');
-    if (!opts) return;
-    diffLoaded = true;
-    document.getElementById('difficulty-list').innerHTML =
-        (opts.difficulties || []).map(d =>
-            `<option value="${escapeHtml(d)}">`).join('');
 }
 
 async function fillArkNova() {
@@ -744,17 +729,16 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     if (isAres(title)) {
         ARES_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
     }
-    payload.difficulty = document.getElementById('difficulty').value;
+    payload.level = document.getElementById('level').value;
     const data = await apiPost('/api/add_game', payload);
     btn.disabled = false;
     if (data?.success) {
         status.textContent = 'Logged!';
         status.className = 'status-ok';
         status.style.display = '';
-        ['game_title','result','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
-        SI_FIELDS.concat(IMP_FIELDS, AN_FIELDS, LADDER_FIELDS, ARES_FIELDS, ['difficulty'])
+        ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
+        SI_FIELDS.concat(IMP_FIELDS, AN_FIELDS, LADDER_FIELDS, ARES_FIELDS, ['level'])
             .forEach(id => document.getElementById(id).value = '');
-        diffLoaded = false;   // a new difficulty should show up in the list
         // Blanking a select with no empty option leaves it showing nothing;
         // the side you play should go back to the usual one.
         const side = document.getElementById('my_civilisation');
@@ -808,7 +792,6 @@ function giSpiritIsland(p) {
             ['Playing as', p.my_civilisation], ['Civilisation', p.civilisation],
             ['Map', p.zoo_map ? 'Map ' + p.zoo_map : ''],
             ['Start appeal', p.start_appeal],
-            ['Difficulty', p.difficulty],
             ['Scenario', p.scenario_number]];
 }
 
@@ -908,10 +891,7 @@ async function renderEdit(p, title) {
                       value="${p.start_appeal ?? ''}"></div>`;
     }
 
-    await fillDifficulty();
-    let extra = `<div class="gi-field"><label>Difficulty</label>
-        <input type="text" id="gi-difficulty" list="difficulty-list"
-               value="${escapeHtml(p.difficulty || '')}"></div>`;
+    let extra = '';
     if (isLadderGame(title)) {
         extra += `<div class="gi-field"><label>Scenario number</label>
             <input type="number" id="gi-scenario_number" min="1" max="999"
@@ -922,7 +902,7 @@ async function renderEdit(p, title) {
         `<div class="gi-field"><label for="gi-date_played">Date played</label>
          <input type="date" id="gi-date_played" value="${escapeHtml(p.date_played || '')}"></div>` +
         field('result', 'Result', p.result) + extra + si + imp + an +
-        field('level', 'Level (older entries)', p.level, 2) +
+        field('level', 'Level', p.level, 2) +
         field('my_score', 'My score', p.my_score) +
         field('bot_score', 'Bot score', p.bot_score) +
         field('notes', 'Notes', p.notes, 4);
@@ -974,7 +954,7 @@ document.getElementById('gi-save').addEventListener('click', async () => {
         civilisation: val('civilisation'),
         my_civilisation: val('my_civilisation'),
         zoo_map: val('zoo_map'), start_appeal: val('start_appeal'),
-        difficulty: val('difficulty'), scenario_number: val('scenario_number'),
+        scenario_number: val('scenario_number'),
     });
     btn.disabled = false;
     status.style.display = '';

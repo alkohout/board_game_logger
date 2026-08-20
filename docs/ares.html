@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ares Expedition</title>
-    <link rel="stylesheet" href="./styles.css?v=28">
+    <link rel="stylesheet" href="./styles.css?v=29">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -77,7 +77,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=28"></script>
+    <script src="./tabs.js?v=29"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -199,18 +199,18 @@
             const plotted = data.games.filter(g =>
                 PARAMS.some(p => g.me[p.key] !== null && g.me[p.key] !== undefined)).reverse();
 
-            // Split by difficulty: a run at Expert and a run at Advanced are
+            // Split by level: a run at Expert and a run at Advanced are
             // different climbs, and one line through both would compare things
             // that aren't comparable.
             const groups = new Map();
             plotted.forEach(g => {
-                const key = g.difficulty || 'Difficulty not recorded';
+                const key = g.level || 'Level not recorded';
                 if (!groups.has(key)) groups.set(key, []);
                 groups.get(key).push(g);
             });
             const ordered = [...groups.entries()].sort((a, b) => {
                 // Unlabelled games last; otherwise most-played first.
-                const un = k => k.startsWith('Difficulty not') ? 1 : 0;
+                const un = k => k.startsWith('Level not') ? 1 : 0;
                 return un(a[0]) - un(b[0]) || b[1].length - a[1].length;
             });
 
@@ -230,7 +230,7 @@
             const rows = data.games.map(g => `<tr>
                 <td class="date">${esc(g.date)}</td>
                 <td class="${g.won ? 'won' : 'lost'}">${g.won ? 'Won' : 'Lost'}</td>
-                <td class="note">${esc(g.difficulty || '')}</td>
+                <td class="note">${esc(g.level || '')}</td>
                 ${num(g.me.temp, t.temp)}${num(g.me.oxygen, t.oxygen)}${num(g.me.oceans, t.oceans)}
                 <td class="num">${g.me.mc ?? ''}</td>
                 <td class="num sep ${g.progress === 100 ? 'hit' : ''}">${
@@ -239,15 +239,18 @@
 
             // Closest finish is the most useful single number here: it says how
             // near the board got, which win/loss alone doesn't.
-            const scored = data.games.filter(g => g.progress !== null);
-            const closest = scored.length
-                ? Math.max(...scored.map(g => g.progress)) : null;
+            // Losses only. Every win is 100% by definition now, so "closest
+            // finish" would read 100% forever the moment you'd won once — the
+            // number worth knowing is how near the ones that got away came.
+            const nearMisses = data.games.filter(g => !g.won && g.progress !== null);
+            const closest = nearMisses.length
+                ? Math.max(...nearMisses.map(g => g.progress)) : null;
 
             const headline = `<p class="headline">
                 ${data.won} won, ${data.lost} lost of ${data.total_games} finished games.
                 Best reached: ${data.best.temp ?? '–'}°C, ${data.best.oxygen ?? '–'}% oxygen,
                 ${data.best.oceans ?? '–'} oceans.
-                ${closest !== null ? `Closest finish got <strong>${closest}%</strong> of the way.` : ''}</p>`;
+                ${closest !== null ? `The nearest miss got <strong>${closest}%</strong> of the way.` : ''}</p>`;
 
             // A finished game with only some parameters recorded can't be
             // placed on the chart; say so rather than letting the line look
@@ -267,7 +270,7 @@
             body.innerHTML = chart + chartGap +
                 `<div class="wrap"><table class="ares">
                     <thead>
-                        <tr><th class="left">Date</th><th></th><th>Diff</th>
+                        <tr><th class="left">Date</th><th></th><th>Level</th>
                             <th>°C<span class="tgt">${t.temp}</span></th>
                             <th>O₂<span class="tgt">${t.oxygen}</span></th>
                             <th>Oc<span class="tgt">${t.oceans}</span></th>
