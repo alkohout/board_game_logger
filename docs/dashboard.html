@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=29">
+    <link rel="stylesheet" href="./styles.css?v=30">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -164,9 +164,15 @@
         <input type="number" id="start_appeal" min="0" max="100" step="1"
                placeholder="e.g. 15" inputmode="numeric">
     </div>
-    <label>Level:</label>
-    <textarea id="level" rows="2"
-              placeholder="Expert, Scenario 8, Map A start 15…"></textarea>
+    <!-- Hidden where the game's own fields already say it: Cascadia has a
+         scenario number, Spirit Island an adversary and scenario, Ark Nova a
+         map and a starting appeal. Ares keeps it — Expert, Advanced and Novice
+         are not covered by the parameters, and the charts group on it. -->
+    <div id="level-field">
+        <label>Level:</label>
+        <textarea id="level" rows="2"
+                  placeholder="Expert, Advanced, Novice…"></textarea>
+    </div>
     <!-- Ares Expedition: a finished game is described by where the three
          global parameters ended up, for you and the bot. A grid, because eight
          stacked number boxes would be miserable to fill in. -->
@@ -384,7 +390,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=29"></script>
+<script src="./tabs.js?v=30"></script>
 <script>
 requireAuth();
 
@@ -613,6 +619,13 @@ function isAres(title) {
     return /ares\s*expedition/i.test(title);
 }
 
+// Games whose own fields already carry what Level used to hold. Not Imperium,
+// which still writes its mode there, and not Ares, whose Expert/Advanced/Novice
+// is the thing its charts are grouped by.
+function levelIsRedundant(title) {
+    return /cascadia|spirit\s*island|ark\s*nova/i.test(title);
+}
+
 // Games where a plain score means nothing, either because the game has no
 // score or because its own fields already hold the numbers.
 function scoresAreRedundant(title) {
@@ -689,6 +702,8 @@ function toggleSpiritIsland() {
     document.getElementById('ares-fields').style.display = isAres(title) ? '' : 'none';
     document.getElementById('score-fields').style.display =
         scoresAreRedundant(title) ? 'none' : '';
+    document.getElementById('level-field').style.display =
+        levelIsRedundant(title) ? 'none' : '';
 }
 document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
 // Picking from the dropdown sets .value in code, which fires no input event —
@@ -729,7 +744,9 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     if (isAres(title)) {
         ARES_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
     }
-    payload.level = document.getElementById('level').value;
+    if (!levelIsRedundant(title)) {
+        payload.level = document.getElementById('level').value;
+    }
     const data = await apiPost('/api/add_game', payload);
     btn.disabled = false;
     if (data?.success) {
@@ -749,6 +766,7 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         document.getElementById('lad-fields').style.display = 'none';
         document.getElementById('ares-fields').style.display = 'none';
         document.getElementById('score-fields').style.display = '';
+        document.getElementById('level-field').style.display = '';
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
