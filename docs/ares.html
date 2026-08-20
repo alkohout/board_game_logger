@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ares Expedition</title>
-    <link rel="stylesheet" href="./styles.css?v=24">
+    <link rel="stylesheet" href="./styles.css?v=25">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -37,9 +37,10 @@
         .axis { stroke: rgba(255,255,255,0.18); stroke-width: 1; }
         .grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
         .tick { fill: #888; font-size: 7px; }
-        .trend { fill: none; stroke: rgba(255,213,79,0.55); stroke-width: 1.5; }
-        .pt-won  { fill: #90EE90; }
-        .pt-lost { fill: #FF8A80; }
+        .series { fill: none; stroke-width: 1.5; }
+        .grid-target { stroke: rgba(144,238,144,0.35); stroke-width: 1; stroke-dasharray: 3 2; }
+        .winmark { fill: #90EE90; }
+        .winmark-key { color: #90EE90; }
         .chart-note { color: #888; font-size: 0.78em; margin: 2px 0 12px; }
         .chart-note span { margin-right: 12px; white-space: nowrap; }
     </style>
@@ -63,7 +64,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=24"></script>
+    <script src="./tabs.js?v=25"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -77,44 +78,72 @@
             return `<td class="num ${cls}">${value}</td>`;
         }
 
-        // Steps short of a terraformed board, over time. Zero sits at the TOP:
-        // the whole point is how close you are getting, so a line climbing the
-        // chart is a run of games getting nearer, which is the way round you
-        // want to read it.
+        // Each global parameter as a percentage of its own target, because the
+        // three run on different scales — temperature -30 to +8, oxygen 0 to
+        // 14, oceans 0 to 9 — and raw values on one axis would let temperature
+        // swamp the other two. 100% means that parameter was finished.
+        const PARAMS = [
+            { key: 'temp',   label: 'Temperature', from: -30, to: 8,  colour: '#FF8A65' },
+            { key: 'oxygen', label: 'Oxygen',      from: 0,   to: 14, colour: '#90CAF9' },
+            { key: 'oceans', label: 'Oceans',      from: 0,   to: 9,  colour: '#4DD0E1' },
+        ];
+
+        const pct = (p, value) =>
+            Math.max(0, Math.min(100, ((value - p.from) / (p.to - p.from)) * 100));
+
         function drawChart(games) {
-            const W = 320, H = 150, L = 22, R = 6, T = 8, B = 18;
-            const maxShort = Math.max(4, ...games.map(g => g.shortfall));
+            const W = 320, H = 155, L = 24, R = 6, T = 8, B = 18;
             const x = i => games.length === 1 ? L + (W - L - R) / 2
                 : L + i * (W - L - R) / (games.length - 1);
-            const y = v => T + (v / maxShort) * (H - T - B);
+            const y = v => T + (1 - v / 100) * (H - T - B);
 
-            const gridlines = [0, Math.round(maxShort / 2), maxShort].map(v => `
-                <line class="grid" x1="${L}" y1="${y(v).toFixed(1)}"
-                      x2="${W - R}" y2="${y(v).toFixed(1)}"/>
+            const gridlines = [0, 50, 100].map(v => `
+                <line class="${v === 100 ? 'grid-target' : 'grid'}"
+                      x1="${L}" y1="${y(v).toFixed(1)}" x2="${W - R}" y2="${y(v).toFixed(1)}"/>
                 <text class="tick" x="${L - 3}" y="${(y(v) + 2.5).toFixed(1)}"
-                      text-anchor="end">${v}</text>`).join('');
+                      text-anchor="end">${v}%</text>`).join('');
 
-            const line = games.map((g, i) => `${x(i).toFixed(1)},${y(g.shortfall).toFixed(1)}`).join(' ');
-            const dots = games.map((g, i) => `
-                <circle class="${g.won ? 'pt-won' : 'pt-lost'}" r="3"
-                        cx="${x(i).toFixed(1)}" cy="${y(g.shortfall).toFixed(1)}">
-                    <title>${esc(g.date)} — ${g.won ? 'won' : 'lost'}, ${g.shortfall} short</title>
-                </circle>`).join('');
+            // One line per parameter. A game missing that parameter breaks the
+            // line rather than being drawn at zero, which would read as a
+            // collapse that never happened.
+            const series = PARAMS.map(p => {
+                const pts = games.map((g, i) => g.me[p.key] === null || g.me[p.key] === undefined
+                    ? null : { x: x(i), y: y(pct(p, g.me[p.key])), g });
+                const runs = [];
+                let run = [];
+                pts.forEach(pt => { if (pt) { run.push(pt); } else if (run.length) { runs.push(run); run = []; } });
+                if (run.length) runs.push(run);
+                const lines = runs.map(r =>
+                    `<polyline class="series" stroke="${p.colour}"
+                               points="${r.map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ')}"/>`).join('');
+                const dots = pts.filter(Boolean).map(q => `
+                    <circle r="2.6" fill="${p.colour}" cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}">
+                        <title>${esc(q.g.date)} — ${esc(p.label)} ${q.g.me[p.key]}${p.key === 'oxygen' ? '%' : ''}</title>
+                    </circle>`).join('');
+                return lines + dots;
+            }).join('');
+
+            // A win is marked on the axis rather than by recolouring a point —
+            // the colours are already saying which parameter is which.
+            const wins = games.map((g, i) => g.won
+                ? `<polygon class="winmark" points="${x(i).toFixed(1)},${H - B + 1}
+                     ${(x(i) - 3).toFixed(1)},${H - B + 6} ${(x(i) + 3).toFixed(1)},${H - B + 6}"/>`
+                : '').join('');
 
             const first = games[0].date.slice(0, 7), last = games[games.length - 1].date.slice(0, 7);
             return `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img"
-                        aria-label="Steps short of terraformed, over time">
+                        aria-label="Each global parameter as a percentage of its target, over time">
                     ${gridlines}
                     <line class="axis" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}"/>
-                    <polyline class="trend" points="${line}"/>
-                    ${dots}
-                    <text class="tick" x="${L}" y="${H - 6}">${esc(first)}</text>
-                    <text class="tick" x="${W - R}" y="${H - 6}" text-anchor="end">${esc(last)}</text>
+                    ${series}${wins}
+                    <text class="tick" x="${L}" y="${H - 4}">${esc(first)}</text>
+                    <text class="tick" x="${W - R}" y="${H - 4}" text-anchor="end">${esc(last)}</text>
                 </svg></div>
                 <p class="chart-note">
-                    <span>Steps short of terraformed — nearer the top is closer.</span>
-                    <span><span class="pt-won" style="font-size:1.2em;">●</span> won</span>
-                    <span><span class="pt-lost" style="font-size:1.2em;">●</span> lost</span></p>`;
+                    ${PARAMS.map(p => `<span><span style="color:${p.colour}; font-size:1.2em;">●</span>
+                        ${esc(p.label)}</span>`).join('')}
+                    <span><span class="winmark-key">▲</span> won</span>
+                    <span>100% is that parameter finished.</span></p>`;
         }
 
         async function load() {
@@ -134,7 +163,8 @@
 
             // How close each finish got, oldest first. Only games where all
             // three parameters were recorded have a shortfall to plot.
-            const plotted = data.games.filter(g => g.shortfall !== null).reverse();
+            const plotted = data.games.filter(g =>
+                PARAMS.some(p => g.me[p.key] !== null && g.me[p.key] !== undefined)).reverse();
             const chart = plotted.length >= 2 ? drawChart(plotted) : '';
 
             const rows = data.games.map(g => `<tr>
