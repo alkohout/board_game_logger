@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=16">
+    <link rel="stylesheet" href="./styles.css?v=17">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -125,6 +125,15 @@
         <select id="my_civilisation"></select>
         <label>Opponent civilisation:</label>
         <select id="civilisation"><option value="">—</option></select>
+    </div>
+    <!-- Ark Nova: the map and the appeal you start the bot on are the setup,
+         and the pair is what gets climbed. -->
+    <div id="an-fields" style="display:none;">
+        <label>Map:</label>
+        <select id="zoo_map"><option value="">—</option></select>
+        <label>Start appeal:</label>
+        <input type="number" id="start_appeal" min="0" max="100" step="1"
+               placeholder="e.g. 15" inputmode="numeric">
     </div>
     <label>Level:</label>
     <textarea id="level" rows="2" placeholder="Add level here..."></textarea>
@@ -303,7 +312,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=16"></script>
+<script src="./tabs.js?v=17"></script>
 <script>
 requireAuth();
 
@@ -500,9 +509,11 @@ setupAutocomplete('selector_game_title', 'selector_suggestions');
 // typed, so every other game pays nothing for them.
 const SI_FIELDS = ['spirit', 'adversary', 'adversary_level', 'scenario'];
 const IMP_FIELDS = ['civilisation', 'my_civilisation'];
+const AN_FIELDS = ['zoo_map', 'start_appeal'];
 let siLoaded = false;
 let impLoaded = false;
 let IMP_DEFAULT_SIDE = 'Romans';
+let anLoaded = false;
 
 function isSpiritIsland(title) {
     return /spirit\s*island/i.test(title);
@@ -510,6 +521,20 @@ function isSpiritIsland(title) {
 
 function isImperium(title) {
     return /imperium/i.test(title);
+}
+
+function isArkNova(title) {
+    return /ark\s*nova/i.test(title);
+}
+
+async function fillArkNova() {
+    if (anLoaded) return;
+    const opts = await apiGet('/api/ark_nova_options');
+    if (!opts) return;
+    anLoaded = true;
+    document.getElementById('zoo_map').innerHTML = '<option value="">—</option>' +
+        (opts.maps || []).map(m =>
+            `<option value="${escapeHtml(m)}">Map ${escapeHtml(m)}</option>`).join('');
 }
 
 async function fillImperium() {
@@ -560,6 +585,9 @@ function toggleSpiritIsland() {
     const imp = isImperium(title);
     document.getElementById('imp-fields').style.display = imp ? '' : 'none';
     if (imp) fillImperium();
+    const an = isArkNova(title);
+    document.getElementById('an-fields').style.display = an ? '' : 'none';
+    if (an) fillArkNova();
 }
 document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
 // Picking from the dropdown sets .value in code, which fires no input event —
@@ -590,6 +618,9 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     if (isImperium(title)) {
         IMP_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
     }
+    if (isArkNova(title)) {
+        AN_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
+    }
     const data = await apiPost('/api/add_game', payload);
     btn.disabled = false;
     if (data?.success) {
@@ -597,13 +628,14 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         status.className = 'status-ok';
         status.style.display = '';
         ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
-        SI_FIELDS.concat(IMP_FIELDS).forEach(id => document.getElementById(id).value = '');
+        SI_FIELDS.concat(IMP_FIELDS, AN_FIELDS).forEach(id => document.getElementById(id).value = '');
         // Blanking a select with no empty option leaves it showing nothing;
         // the side you play should go back to the usual one.
         const side = document.getElementById('my_civilisation');
         if (side) side.value = IMP_DEFAULT_SIDE;
         document.getElementById('si-fields').style.display = 'none';
         document.getElementById('imp-fields').style.display = 'none';
+        document.getElementById('an-fields').style.display = 'none';
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
@@ -644,7 +676,9 @@ function giSpiritIsland(p) {
     const adv = p.adversary
         ? p.adversary + (p.adversary_level ? ` (level ${p.adversary_level})` : '') : '';
     return [['Spirit', p.spirit], ['Adversary', adv], ['Scenario', p.scenario],
-            ['Playing as', p.my_civilisation], ['Civilisation', p.civilisation]];
+            ['Playing as', p.my_civilisation], ['Civilisation', p.civilisation],
+            ['Map', p.zoo_map ? 'Map ' + p.zoo_map : ''],
+            ['Start appeal', p.start_appeal]];
 }
 
 function renderProgress(p) {
@@ -729,10 +763,24 @@ async function renderEdit(p, title) {
               `</select></div>`;
     }
 
+    let an = '';
+    if (isArkNova(title)) {
+        await fillArkNova();
+        const maps = [...document.getElementById('zoo_map').options];
+        an = `<div class="gi-field"><label>Map</label><select id="gi-zoo_map">` +
+             maps.map(o => `<option value="${escapeHtml(o.value)}"${
+                 o.value === (p.zoo_map || '') ? ' selected' : ''
+             }>${escapeHtml(o.textContent)}</option>`).join('') +
+             `</select></div>
+              <div class="gi-field"><label>Start appeal</label>
+               <input type="number" id="gi-start_appeal" min="0" max="100"
+                      value="${p.start_appeal ?? ''}"></div>`;
+    }
+
     document.getElementById('gi-edit').innerHTML =
         `<div class="gi-field"><label for="gi-date_played">Date played</label>
          <input type="date" id="gi-date_played" value="${escapeHtml(p.date_played || '')}"></div>` +
-        field('result', 'Result', p.result) + si + imp +
+        field('result', 'Result', p.result) + si + imp + an +
         field('level', 'Level', p.level, 2) +
         field('my_score', 'My score', p.my_score) +
         field('bot_score', 'Bot score', p.bot_score) +
@@ -784,6 +832,7 @@ document.getElementById('gi-save').addEventListener('click', async () => {
         adversary_level: val('adversary_level'), scenario: val('scenario'),
         civilisation: val('civilisation'),
         my_civilisation: val('my_civilisation'),
+        zoo_map: val('zoo_map'), start_appeal: val('start_appeal'),
     });
     btn.disabled = false;
     status.style.display = '';

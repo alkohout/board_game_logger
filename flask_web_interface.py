@@ -205,7 +205,7 @@ EXPECTED_COLUMNS = {
     # add_game writes the Spirit Island columns on every insert, so code
     # deployed ahead of migration 012 would fail to log any game at all.
     'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario',
-              'civilisation', 'my_civilisation'),
+              'civilisation', 'my_civilisation', 'zoo_map', 'start_appeal'),
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
@@ -1784,11 +1784,12 @@ def api_add_game():
         cur.execute(
             "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score,"
             " spirit, adversary, adversary_level, scenario, civilisation,"
-            " my_civilisation) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " my_civilisation, zoo_map, start_appeal)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
              spirit, adversary, level, scenario, imperium_civilisation(data),
-             imperium_my_civilisation(data))
+             imperium_my_civilisation(data), *ark_nova_fields(data))
         )
         conn.commit()
         cur.close()
@@ -2156,6 +2157,59 @@ def sleeping_gods_category(name):
 
 
 
+# Ark Nova. The base game has ten map variants — 0 and A, plus 1-8. Map Pack 1
+# adds 9 and 10, Map Pack 2 adds 11-14; both are left out until they're owned,
+# rather than offering maps that aren't on the shelf.
+ARK_NOVA_MAPS = ['0', 'A'] + [str(n) for n in range(1, 9)]
+
+_ARK_MAP_RE = re.compile(r'\bmap\s*([0-9]{1,2}|[A-Za-z])\b', re.I)
+# "start 15", "starting 15", "started at 20", "start at 20", "10 appeal".
+_ARK_APPEAL_RE = re.compile(
+    r'\bstart(?:ed|ing)?\s*(?:at\s*)?(\d{1,3})\b|\b(\d{1,3})\s*appeal\b', re.I)
+
+
+def ark_nova_from_text(text):
+    """Map and starting appeal out of a free-text note.
+
+    For plays logged before there were fields for them: "Map 0, start 15",
+    "Map A. Start 10.", "Won map A, start 10 appeal".
+    """
+    text = text or ''
+    zoo_map = None
+    found = _ARK_MAP_RE.search(text)
+    if found:
+        token = found.group(1).upper()
+        if token in ARK_NOVA_MAPS:
+            zoo_map = token
+    appeal = None
+    found = _ARK_APPEAL_RE.search(text)
+    if found:
+        value = int(next(g for g in found.groups() if g))
+        if 0 <= value <= 100:
+            appeal = value
+    return zoo_map, appeal
+
+
+def ark_nova_fields(data):
+    """Validate the Ark Nova pickers off a request body."""
+    zoo_map = (data.get('zoo_map') or '').strip().upper()
+    zoo_map = zoo_map if zoo_map in ARK_NOVA_MAPS else None
+    appeal = data.get('start_appeal')
+    try:
+        appeal = int(appeal) if str(appeal or '').strip() else None
+    except (TypeError, ValueError):
+        appeal = None
+    if appeal is not None and not 0 <= appeal <= 100:
+        appeal = None
+    return zoo_map, appeal
+
+
+@app.route('/api/ark_nova_options')
+def api_ark_nova_options():
+    """The map picker on the log form."""
+    return jsonify({'maps': ARK_NOVA_MAPS})
+
+
 # Romans is the deck you play, and never one you face — which is what keeps
 # "Romans (me)" out of the opponent tally. It is still a playable side, so it
 # leads the list of what you can pick for yourself.
@@ -2225,7 +2279,8 @@ def spirit_island_fields(data):
 
 PLAY_COLUMNS = ('id', 'date_played', 'game_title', 'result', 'level', 'my_score',
                 'bot_score', 'notes', 'spirit', 'adversary', 'adversary_level',
-                'scenario', 'civilisation', 'my_civilisation')
+                'scenario', 'civilisation', 'my_civilisation', 'zoo_map',
+                'start_appeal')
 
 
 def play_row(row):
@@ -2344,13 +2399,14 @@ def api_update_play():
                              my_score = %s, bot_score = %s, notes = %s,
                              spirit = %s, adversary = %s, adversary_level = %s,
                              scenario = %s, civilisation = %s,
-                             my_civilisation = %s
+                             my_civilisation = %s, zoo_map = %s,
+                             start_appeal = %s
             WHERE id = %s
         """, (data.get('date_played'), data.get('result', ''), data.get('level', ''),
               data.get('my_score', ''), data.get('bot_score', ''), data.get('notes', ''),
               spirit, adversary, level, scenario,
               imperium_civilisation(data), imperium_my_civilisation(data),
-              play_id))
+              *ark_nova_fields(data), play_id))
         if cur.rowcount != 1:
             conn.rollback()
             cur.close(); conn.close()
