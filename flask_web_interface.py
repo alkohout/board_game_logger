@@ -206,7 +206,7 @@ EXPECTED_COLUMNS = {
     # deployed ahead of migration 012 would fail to log any game at all.
     'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario',
               'civilisation', 'my_civilisation', 'zoo_map', 'start_appeal',
-              'difficulty', 'scenario_number'),
+              'difficulty', 'scenario_number', 'ares_temp_me', 'ares_temp_bot'),
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
@@ -1444,6 +1444,8 @@ GAME_TRACKERS = [
      'blurb': 'Maps and starting appeal', 'match': '%ark nova%'},
     {'key': 'cascadia', 'label': 'Cascadia', 'page': 'cascadia.html',
      'blurb': 'The solo scenario ladder', 'match': '%cascadia%'},
+    {'key': 'ares', 'label': 'Ares Expedition', 'page': 'ares.html',
+     'blurb': 'How close each game got to terraformed', 'match': '%ares expedition%'},
 ]
 
 
@@ -1791,13 +1793,16 @@ def api_add_game():
             "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score,"
             " spirit, adversary, adversary_level, scenario, civilisation,"
             " my_civilisation, zoo_map, start_appeal, difficulty,"
-            " scenario_number)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " scenario_number, ares_temp_me, ares_oxygen_me, ares_oceans_me,"
+            " ares_mc_me, ares_temp_bot, ares_oxygen_bot, ares_oceans_bot,"
+            " ares_mc_bot)"
+            " VALUES (" + ",".join(["%s"] * 25) + ")",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
              spirit, adversary, level, scenario, imperium_civilisation(data),
              imperium_my_civilisation(data), *ark_nova_fields(data),
-             difficulty_value(data), scenario_number_value(data))
+             difficulty_value(data), scenario_number_value(data),
+             *ares_fields(data))
         )
         conn.commit()
         cur.close()
@@ -2264,6 +2269,115 @@ def leading_number(text):
     return int(found.group(1)) if found else None
 
 
+# Ares Expedition. A finished game is described by where the three global
+# parameters ended up, for you and for the bot — the bot is nearly always fully
+# terraformed at 8 C, 14%, 9 oceans, which is what you're racing.
+ARES_MATCH = '%ares expedition%'
+ARES_TARGET = {'temp': 8, 'oxygen': 14, 'oceans': 9}
+ARES_FIELDS = ('temp', 'oxygen', 'oceans', 'mc')
+
+# Written every which way: "8 C, 13 %, 9 ocean Tiles", "-2 C, 12%, 7 O2, 35 M".
+# The third number is oceans however it was labelled — ocean, tiles, or O2,
+# which was being used loosely for the same thing.
+_ARES_PATTERNS = {
+    'temp':   re.compile(r'(-?\d{1,3})\s*C\b', re.I),
+    'oxygen': re.compile(r'(\d{1,3})\s*%'),
+    # Both orders appear: "9 ocean tiles" and "Ocean: 5".
+    'oceans': re.compile(
+        r'(\d{1,3})\s*(?:ocean|tile|o2)|(?:ocean|tile|o2)\w*\s*:?\s*(\d{1,3})', re.I),
+    'mc':     re.compile(r'(\d{1,3})\s*M(?:C|Cs)?\b(?!\w)', re.I),
+}
+ARES_LIMITS = {'temp': (-40, 20), 'oxygen': (0, 20),
+               'oceans': (0, 12), 'mc': (0, 999)}
+
+
+def ares_from_text(text):
+    """Pull the end state out of one of the old free-text score fields."""
+    out = {}
+    for key, pattern in _ARES_PATTERNS.items():
+        found = pattern.search(text or '')
+        if not found:
+            continue
+        # Some patterns have the number in either of two groups.
+        digits = next((g for g in found.groups() if g), None)
+        if digits is None:
+            continue
+        value = int(digits)
+        low, high = ARES_LIMITS[key]
+        if low <= value <= high:
+            out[key] = value
+    return out
+
+
+def ares_fields(data):
+    """Validate the eight Ares numbers off a request body."""
+    out = []
+    for side in ('me', 'bot'):
+        for key in ARES_FIELDS:
+            raw = data.get(f'ares_{key}_{side}')
+            try:
+                value = int(raw) if str(raw or '').strip() else None
+            except (TypeError, ValueError):
+                value = None
+            low, high = ARES_LIMITS[key]
+            out.append(value if value is not None and low <= value <= high else None)
+    return out
+
+
+@app.route('/api/ares_stats')
+def api_ares_stats():
+    """Every finished Ares game, and how close the board got to terraformed.
+
+    Only finished games: an unfinished sitting has no end state to report, and
+    including it would drag every average toward zero.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT date_played, result, difficulty,
+                          ares_temp_me, ares_oxygen_me, ares_oceans_me, ares_mc_me,
+                          ares_temp_bot, ares_oxygen_bot, ares_oceans_bot, ares_mc_bot,
+                          notes
+                   FROM games WHERE game_title ILIKE %s
+                   ORDER BY date_played DESC, id DESC""", (ARES_MATCH,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    games, sittings = [], len(rows)
+    for r in rows:
+        result = (r[1] or '').lower()
+        if 'won' not in result and 'lost' not in result:
+            continue
+        me = dict(zip(ARES_FIELDS, r[3:7]))
+        bot = dict(zip(ARES_FIELDS, r[7:11]))
+        # How far short of a terraformed board you finished. Only counted when
+        # all three are recorded, or the shortfall would look better than it was.
+        short = None
+        if all(me.get(k) is not None for k in ('temp', 'oxygen', 'oceans')):
+            short = sum(max(0, ARES_TARGET[k] - me[k]) if k != 'temp'
+                        else max(0, ARES_TARGET[k] - me[k])
+                        for k in ('temp', 'oxygen', 'oceans'))
+        games.append({
+            'date': r[0].isoformat(), 'won': 'won' in result,
+            'difficulty': r[2], 'me': me, 'bot': bot,
+            'shortfall': short, 'notes': r[11] or '',
+        })
+
+    def best(key):
+        values = [g['me'][key] for g in games if g['me'].get(key) is not None]
+        return max(values) if values else None
+
+    return jsonify({
+        'games': games, 'target': ARES_TARGET,
+        'total_plays': sittings, 'total_games': len(games),
+        'won': sum(1 for g in games if g['won']),
+        'lost': sum(1 for g in games if not g['won']),
+        'best': {k: best(k) for k in ARES_FIELDS},
+        'recorded': sum(1 for g in games
+                        if any(g['me'].get(k) is not None for k in ARES_FIELDS)),
+    })
+
+
 # Ark Nova. The base game has ten map variants — 0 and A, plus 1-8. Map Pack 1
 # adds 9 and 10, Map Pack 2 adds 11-14; both are left out until they're owned,
 # rather than offering maps that aren't on the shelf.
@@ -2445,7 +2559,9 @@ def spirit_island_fields(data):
 PLAY_COLUMNS = ('id', 'date_played', 'game_title', 'result', 'level', 'my_score',
                 'bot_score', 'notes', 'spirit', 'adversary', 'adversary_level',
                 'scenario', 'civilisation', 'my_civilisation', 'zoo_map',
-                'start_appeal', 'difficulty', 'scenario_number')
+                'start_appeal', 'difficulty', 'scenario_number',
+                'ares_temp_me', 'ares_oxygen_me', 'ares_oceans_me', 'ares_mc_me',
+                'ares_temp_bot', 'ares_oxygen_bot', 'ares_oceans_bot', 'ares_mc_bot')
 
 
 def play_row(row):
@@ -2566,14 +2682,18 @@ def api_update_play():
                              scenario = %s, civilisation = %s,
                              my_civilisation = %s, zoo_map = %s,
                              start_appeal = %s, difficulty = %s,
-                             scenario_number = %s
+                             scenario_number = %s,
+                             ares_temp_me = %s, ares_oxygen_me = %s,
+                             ares_oceans_me = %s, ares_mc_me = %s,
+                             ares_temp_bot = %s, ares_oxygen_bot = %s,
+                             ares_oceans_bot = %s, ares_mc_bot = %s
             WHERE id = %s
         """, (data.get('date_played'), data.get('result', ''), data.get('level', ''),
               data.get('my_score', ''), data.get('bot_score', ''), data.get('notes', ''),
               spirit, adversary, level, scenario,
               imperium_civilisation(data), imperium_my_civilisation(data),
               *ark_nova_fields(data), difficulty_value(data),
-              scenario_number_value(data), play_id))
+              scenario_number_value(data), *ares_fields(data), play_id))
         if cur.rowcount != 1:
             conn.rollback()
             cur.close(); conn.close()
@@ -3451,7 +3571,8 @@ def api_recent_plays():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT date_played, game_title, result, level, my_score, bot_score, notes
+        SELECT date_played, game_title, result, level, my_score, bot_score, notes,
+               difficulty
         FROM games
         ORDER BY date_played DESC, id DESC
         LIMIT 5
@@ -3467,6 +3588,7 @@ def api_recent_plays():
         'my_score': r[4] or '',
         'bot_score': r[5] or '',
         'notes': r[6] or '',
+        'difficulty': r[7] or '',
     } for r in rows])
 
 

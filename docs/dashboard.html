@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=21">
+    <link rel="stylesheet" href="./styles.css?v=22">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -21,6 +21,13 @@
         .kv dd { margin: 0; overflow-wrap: anywhere; }
         .kv-rule { border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 10px 0; }
         .kv-notes { margin: 10px 0 0; font-size: 0.9em; overflow-wrap: anywhere; }
+
+        /* Ares end state: a small you/bot grid, so eight numbers stay readable. */
+        .ares-grid { border-collapse: collapse; width: 100%; margin-bottom: 6px; }
+        .ares-grid th { font-size: 0.78em; color: #aaa; font-weight: normal; padding: 0 4px 3px; }
+        .ares-grid td { padding: 2px 4px; font-size: 0.85em; color: #ccc; }
+        .ares-grid td:first-child { white-space: nowrap; width: 34%; }
+        .ares-grid input { width: 100%; margin: 0; padding: 6px 4px; text-align: center; }
 
         /* "More" as a scannable list. Full-width rows beat a wrapping row of
            buttons once there are more than about four, and there is room for a
@@ -160,14 +167,37 @@
     <input type="text" id="difficulty" list="difficulty-list" autocomplete="off"
            placeholder="Easy, Normal, Expert…">
     <datalist id="difficulty-list"></datalist>
+    <!-- Ares Expedition: a finished game is described by where the three
+         global parameters ended up, for you and the bot. A grid, because eight
+         stacked number boxes would be miserable to fill in. -->
+    <div id="ares-fields" style="display:none;">
+        <label>End state:</label>
+        <table class="ares-grid">
+            <thead><tr><th></th><th>You</th><th>Bot</th></tr></thead>
+            <tbody>
+                <tr><td>Temperature</td>
+                    <td><input type="number" id="ares_temp_me" min="-40" max="20" step="1"></td>
+                    <td><input type="number" id="ares_temp_bot" min="-40" max="20" step="1"></td></tr>
+                <tr><td>Oxygen %</td>
+                    <td><input type="number" id="ares_oxygen_me" min="0" max="20" step="1"></td>
+                    <td><input type="number" id="ares_oxygen_bot" min="0" max="20" step="1"></td></tr>
+                <tr><td>Oceans</td>
+                    <td><input type="number" id="ares_oceans_me" min="0" max="12" step="1"></td>
+                    <td><input type="number" id="ares_oceans_bot" min="0" max="12" step="1"></td></tr>
+                <tr><td>MC</td>
+                    <td><input type="number" id="ares_mc_me" min="0" max="999" step="1"></td>
+                    <td><input type="number" id="ares_mc_bot" min="0" max="999" step="1"></td></tr>
+            </tbody>
+        </table>
+        <button type="button" id="ares-terraformed" class="btn-blue"
+                style="font-size:0.8em; padding:6px 10px;">Bot fully terraformed</button>
+    </div>
     <!-- Games climbed a rung at a time. Shown for those, not for everything. -->
     <div id="lad-fields" style="display:none;">
         <label>Scenario number:</label>
         <input type="number" id="scenario_number" min="1" max="999" step="1"
                placeholder="e.g. 9" inputmode="numeric">
     </div>
-    <label>Level:</label>
-    <textarea id="level" rows="2" placeholder="Add level here..."></textarea>
     <label>My Score:</label>
     <textarea id="my_score" rows="1" placeholder="Add my score here..."></textarea>
     <label>Bot Score:</label>
@@ -207,7 +237,7 @@
 
     <h2>Recent Plays</h2>
     <table id="recent-table">
-        <thead><tr><th style="width:55px">Date</th><th>Game</th><th style="width:80px">Result</th><th style="width:60px">Level</th></tr></thead>
+        <thead><tr><th style="width:55px">Date</th><th>Game</th><th style="width:80px">Result</th><th style="width:70px">Difficulty</th></tr></thead>
         <tbody id="recent-body"><tr><td colspan="4" style="color:#aaa;">Loading...</td></tr></tbody>
     </table>
 </div>
@@ -351,7 +381,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=21"></script>
+<script src="./tabs.js?v=22"></script>
 <script>
 requireAuth();
 
@@ -537,7 +567,7 @@ async function loadRecentPlays() {
         <td style="white-space:nowrap">${fmtDate(r.date_played)}</td>
         <td>${r.game_title}</td>
         <td>${r.result}</td>
-        <td>${r.level}</td>
+        <td>${escapeHtml(r.difficulty || r.level || '')}</td>
     </tr>`).join('');
 }
 loadRecentPlays();
@@ -555,6 +585,8 @@ const SI_FIELDS = ['spirit', 'adversary', 'adversary_level', 'scenario'];
 const IMP_FIELDS = ['civilisation', 'my_civilisation'];
 const AN_FIELDS = ['zoo_map', 'start_appeal'];
 const LADDER_FIELDS = ['scenario_number'];
+const ARES_FIELDS = ['temp', 'oxygen', 'oceans', 'mc']
+    .flatMap(k => [`ares_${k}_me`, `ares_${k}_bot`]);
 let diffLoaded = false;
 let siLoaded = false;
 let impLoaded = false;
@@ -575,6 +607,10 @@ function isArkNova(title) {
 
 // Games logged as a numbered ladder. Cascadia today; For Northwood! and
 // anything else can join by name without touching the rest.
+function isAres(title) {
+    return /ares\s*expedition/i.test(title);
+}
+
 function isLadderGame(title) {
     return /cascadia|northwood/i.test(title);
 }
@@ -654,7 +690,16 @@ function toggleSpiritIsland() {
     if (an) fillArkNova();
     const lad = isLadderGame(title);
     document.getElementById('lad-fields').style.display = lad ? '' : 'none';
+    document.getElementById('ares-fields').style.display = isAres(title) ? '' : 'none';
 }
+// The bot ends fully terraformed in almost every recorded game, so filling
+// its three boxes by hand each time is pure tedium.
+document.getElementById('ares-terraformed').addEventListener('click', () => {
+    document.getElementById('ares_temp_bot').value = 8;
+    document.getElementById('ares_oxygen_bot').value = 14;
+    document.getElementById('ares_oceans_bot').value = 9;
+});
+
 document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
 // Picking from the dropdown sets .value in code, which fires no input event —
 // setupAutocomplete dispatches change for exactly this reason.
@@ -671,7 +716,6 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     const payload = {
         date_played: dp, game_title: title,
         result: document.getElementById('result').value,
-        level: document.getElementById('level').value,
         my_score: document.getElementById('my_score').value,
         bot_score: document.getElementById('bot_score').value,
         notes: document.getElementById('notes').value
@@ -690,6 +734,9 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     if (isLadderGame(title)) {
         LADDER_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
     }
+    if (isAres(title)) {
+        ARES_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
+    }
     payload.difficulty = document.getElementById('difficulty').value;
     const data = await apiPost('/api/add_game', payload);
     btn.disabled = false;
@@ -697,8 +744,8 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         status.textContent = 'Logged!';
         status.className = 'status-ok';
         status.style.display = '';
-        ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
-        SI_FIELDS.concat(IMP_FIELDS, AN_FIELDS, LADDER_FIELDS, ['difficulty'])
+        ['game_title','result','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
+        SI_FIELDS.concat(IMP_FIELDS, AN_FIELDS, LADDER_FIELDS, ARES_FIELDS, ['difficulty'])
             .forEach(id => document.getElementById(id).value = '');
         diffLoaded = false;   // a new difficulty should show up in the list
         // Blanking a select with no empty option leaves it showing nothing;
@@ -709,6 +756,7 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         document.getElementById('imp-fields').style.display = 'none';
         document.getElementById('an-fields').style.display = 'none';
         document.getElementById('lad-fields').style.display = 'none';
+        document.getElementById('ares-fields').style.display = 'none';
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
@@ -866,7 +914,7 @@ async function renderEdit(p, title) {
         `<div class="gi-field"><label for="gi-date_played">Date played</label>
          <input type="date" id="gi-date_played" value="${escapeHtml(p.date_played || '')}"></div>` +
         field('result', 'Result', p.result) + extra + si + imp + an +
-        field('level', 'Level', p.level, 2) +
+        field('level', 'Level (older entries)', p.level, 2) +
         field('my_score', 'My score', p.my_score) +
         field('bot_score', 'Bot score', p.bot_score) +
         field('notes', 'Notes', p.notes, 4);

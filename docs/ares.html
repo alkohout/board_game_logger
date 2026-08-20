@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ares Expedition</title>
+    <link rel="stylesheet" href="./styles.css?v=22">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        .wrap { overflow-x: auto; }
+        table.ares { border-collapse: collapse; width: 100%; min-width: 420px; }
+        table.ares th, table.ares td { padding: 7px 6px; }
+        table.ares thead th {
+            font-size: 0.74em; color: #aaa; font-weight: normal; text-align: center;
+        }
+        table.ares thead th.left { text-align: left; }
+        table.ares tbody tr { border-bottom: 1px solid rgba(255,255,255,0.07); }
+        .date { white-space: nowrap; font-size: 0.85em; }
+        .num { text-align: center; font-variant-numeric: tabular-nums; width: 42px; }
+        .won  { color: #90EE90; font-weight: bold; }
+        .lost { color: #FF8A80; }
+        /* A parameter that reached its target is done; short of it is the gap. */
+        .hit  { color: #90EE90; }
+        .miss { color: #FF8A80; }
+        .botcol { color: #999; }
+        .sep { border-left: 1px solid rgba(255,255,255,0.16); }
+        .caption { color: #ccc; font-size: 0.9em; margin: 0 0 4px; }
+        .aside { color: #888; font-size: 0.82em; margin: 10px 0 0; }
+        .headline { margin: 12px 0 0; padding: 9px 11px; border-left: 3px solid #FFD54F;
+                    background: rgba(255,213,79,0.07); font-size: 0.9em; }
+        .note { color: #aaa; font-size: 0.8em; }
+    </style>
+</head>
+<body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
+    <div class="form-container">
+        <h2>Ares Expedition</h2>
+        <p class="caption">Where each finished game ended up, against a fully
+           terraformed board.</p>
+        <div id="body"><p style="color:#aaa;">Loading...</p></div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script src="./tabs.js?v=22"></script>
+    <script>
+        requireAuth();
+        renderTabs('games');
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        function num(value, target) {
+            if (value === null || value === undefined) return '<td class="num">·</td>';
+            const cls = target !== undefined && value >= target ? 'hit' : 'miss';
+            return `<td class="num ${cls}">${value}</td>`;
+        }
+
+        async function load() {
+            const data = await apiGet('/api/ares_stats');
+            const body = document.getElementById('body');
+            if (!data) return;
+            if (data.success === false) {
+                body.innerHTML = `<p class="status-err">${esc(data.message || 'Not allowed.')}</p>`;
+                return;
+            }
+            if (!data.games.length) {
+                body.innerHTML = '<p class="aside">No finished games recorded yet.</p>';
+                return;
+            }
+
+            const t = data.target;
+            const rows = data.games.map(g => `<tr>
+                <td class="date">${esc(g.date)}</td>
+                <td class="${g.won ? 'won' : 'lost'}">${g.won ? 'Won' : 'Lost'}</td>
+                <td class="note">${esc(g.difficulty || '')}</td>
+                ${num(g.me.temp, t.temp)}${num(g.me.oxygen, t.oxygen)}${num(g.me.oceans, t.oceans)}
+                <td class="num">${g.me.mc ?? ''}</td>
+                <td class="num sep botcol">${g.bot.temp ?? '·'}</td>
+                <td class="num botcol">${g.bot.oxygen ?? '·'}</td>
+                <td class="num botcol">${g.bot.oceans ?? '·'}</td>
+            </tr>`).join('');
+
+            // Closest finish is the most useful single number here: it says how
+            // near the board got, which win/loss alone doesn't.
+            const withGap = data.games.filter(g => g.shortfall !== null);
+            const closest = withGap.length
+                ? Math.min(...withGap.map(g => g.shortfall)) : null;
+
+            const headline = `<p class="headline">
+                ${data.won} won, ${data.lost} lost of ${data.total_games} finished games.
+                Best reached: ${data.best.temp ?? '–'}°C, ${data.best.oxygen ?? '–'}% oxygen,
+                ${data.best.oceans ?? '–'} oceans — target is
+                ${t.temp}°C, ${t.oxygen}%, ${t.oceans}.
+                ${closest !== null ? `Closest finish was ${closest} step${closest === 1 ? '' : 's'} short.` : ''}</p>`;
+
+            const gap = data.total_plays > data.total_games
+                ? `<p class="aside">${data.total_plays - data.total_games} sittings weren't
+                     finished, so they have no end state and aren't listed.</p>`
+                : '';
+
+            body.innerHTML =
+                `<div class="wrap"><table class="ares">
+                    <thead>
+                        <tr><th class="left"></th><th></th><th></th>
+                            <th colspan="4">You</th>
+                            <th colspan="3" class="sep">Bot</th></tr>
+                        <tr><th class="left">Date</th><th></th><th>Diff</th>
+                            <th>°C</th><th>O₂</th><th>Oc</th><th>MC</th>
+                            <th class="sep">°C</th><th>O₂</th><th>Oc</th></tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                 </table></div>` + headline + gap;
+        }
+        load();
+    </script>
+</body>
+</html>
