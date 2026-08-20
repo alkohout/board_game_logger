@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ares Expedition</title>
-    <link rel="stylesheet" href="./styles.css?v=22">
+    <link rel="stylesheet" href="./styles.css?v=23">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -30,6 +30,18 @@
         .headline { margin: 12px 0 0; padding: 9px 11px; border-left: 3px solid #FFD54F;
                     background: rgba(255,213,79,0.07); font-size: 0.9em; }
         .note { color: #aaa; font-size: 0.8em; }
+        /* Progress chart. Hand-drawn SVG rather than a library: the page has
+           to work offline and the shape is simple enough not to need one. */
+        .chart-wrap { margin: 4px 0 2px; }
+        .chart-wrap svg { width: 100%; height: auto; display: block; }
+        .axis { stroke: rgba(255,255,255,0.18); stroke-width: 1; }
+        .grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
+        .tick { fill: #888; font-size: 7px; }
+        .trend { fill: none; stroke: rgba(255,213,79,0.55); stroke-width: 1.5; }
+        .pt-won  { fill: #90EE90; }
+        .pt-lost { fill: #FF8A80; }
+        .chart-note { color: #888; font-size: 0.78em; margin: 2px 0 12px; }
+        .chart-note span { margin-right: 12px; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -50,7 +62,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=22"></script>
+    <script src="./tabs.js?v=23"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -62,6 +74,46 @@
             if (value === null || value === undefined) return '<td class="num">·</td>';
             const cls = target !== undefined && value >= target ? 'hit' : 'miss';
             return `<td class="num ${cls}">${value}</td>`;
+        }
+
+        // Steps short of a terraformed board, over time. Zero sits at the TOP:
+        // the whole point is how close you are getting, so a line climbing the
+        // chart is a run of games getting nearer, which is the way round you
+        // want to read it.
+        function drawChart(games) {
+            const W = 320, H = 150, L = 22, R = 6, T = 8, B = 18;
+            const maxShort = Math.max(4, ...games.map(g => g.shortfall));
+            const x = i => games.length === 1 ? L + (W - L - R) / 2
+                : L + i * (W - L - R) / (games.length - 1);
+            const y = v => T + (v / maxShort) * (H - T - B);
+
+            const gridlines = [0, Math.round(maxShort / 2), maxShort].map(v => `
+                <line class="grid" x1="${L}" y1="${y(v).toFixed(1)}"
+                      x2="${W - R}" y2="${y(v).toFixed(1)}"/>
+                <text class="tick" x="${L - 3}" y="${(y(v) + 2.5).toFixed(1)}"
+                      text-anchor="end">${v}</text>`).join('');
+
+            const line = games.map((g, i) => `${x(i).toFixed(1)},${y(g.shortfall).toFixed(1)}`).join(' ');
+            const dots = games.map((g, i) => `
+                <circle class="${g.won ? 'pt-won' : 'pt-lost'}" r="3"
+                        cx="${x(i).toFixed(1)}" cy="${y(g.shortfall).toFixed(1)}">
+                    <title>${esc(g.date)} — ${g.won ? 'won' : 'lost'}, ${g.shortfall} short</title>
+                </circle>`).join('');
+
+            const first = games[0].date.slice(0, 7), last = games[games.length - 1].date.slice(0, 7);
+            return `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img"
+                        aria-label="Steps short of terraformed, over time">
+                    ${gridlines}
+                    <line class="axis" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}"/>
+                    <polyline class="trend" points="${line}"/>
+                    ${dots}
+                    <text class="tick" x="${L}" y="${H - 6}">${esc(first)}</text>
+                    <text class="tick" x="${W - R}" y="${H - 6}" text-anchor="end">${esc(last)}</text>
+                </svg></div>
+                <p class="chart-note">
+                    <span>Steps short of terraformed — nearer the top is closer.</span>
+                    <span><span class="pt-won" style="font-size:1.2em;">●</span> won</span>
+                    <span><span class="pt-lost" style="font-size:1.2em;">●</span> lost</span></p>`;
         }
 
         async function load() {
@@ -78,6 +130,12 @@
             }
 
             const t = data.target;
+
+            // How close each finish got, oldest first. Only games where all
+            // three parameters were recorded have a shortfall to plot.
+            const plotted = data.games.filter(g => g.shortfall !== null).reverse();
+            const chart = plotted.length >= 2 ? drawChart(plotted) : '';
+
             const rows = data.games.map(g => `<tr>
                 <td class="date">${esc(g.date)}</td>
                 <td class="${g.won ? 'won' : 'lost'}">${g.won ? 'Won' : 'Lost'}</td>
@@ -102,12 +160,22 @@
                 ${t.temp}°C, ${t.oxygen}%, ${t.oceans}.
                 ${closest !== null ? `Closest finish was ${closest} step${closest === 1 ? '' : 's'} short.` : ''}</p>`;
 
+            // A finished game with only some parameters recorded can't be
+            // placed on the chart; say so rather than letting the line look
+            // like the whole story.
+            const missing = data.total_games - plotted.length;
+            const chartGap = missing
+                ? `<p class="chart-note">${missing} finished
+                     ${missing === 1 ? 'game is' : 'games are'} missing a parameter,
+                     so ${missing === 1 ? 'it is' : 'they are'} not on the chart.</p>`
+                : '';
+
             const gap = data.total_plays > data.total_games
                 ? `<p class="aside">${data.total_plays - data.total_games} sittings weren't
                      finished, so they have no end state and aren't listed.</p>`
                 : '';
 
-            body.innerHTML =
+            body.innerHTML = chart + chartGap +
                 `<div class="wrap"><table class="ares">
                     <thead>
                         <tr><th class="left"></th><th></th><th></th>
