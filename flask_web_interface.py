@@ -1439,6 +1439,8 @@ GAME_TRACKERS = [
      'match': '%imperium%'},
     {'key': 'sleeping_gods',  'label': 'Sleeping Gods Log', 'page': 'sleeping_gods.html',
      'match': '%sleeping gods%'},
+    {'key': 'ark_nova',       'label': 'Ark Nova',         'page': 'ark_nova.html',
+     'match': '%ark nova%'},
 ]
 
 
@@ -2202,6 +2204,64 @@ def ark_nova_fields(data):
     if appeal is not None and not 0 <= appeal <= 100:
         appeal = None
     return zoo_map, appeal
+
+
+# The difficulty ladder people actually climb, in fives. Any appeal you've
+# recorded that isn't on it gets a column too, so an odd rung is never hidden.
+ARK_NOVA_APPEAL_LADDER = [0, 5, 10, 15, 20, 25, 30]
+
+
+@app.route('/api/ark_nova_stats')
+def api_ark_nova_stats():
+    """Map against starting appeal — the setup, and the thing being climbed.
+
+    Reads `games` directly, which is row-level-secured, so every account sees
+    its own. Won and lost count finished games; a sitting with no result is a
+    game left set up, and is not a loss.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT zoo_map, start_appeal, result
+                   FROM games WHERE game_title ILIKE '%ark nova%'""")
+    plays = [{'zoo_map': r[0], 'start_appeal': r[1], 'result': r[2]}
+             for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+
+    used = {p['start_appeal'] for p in plays if p['start_appeal'] is not None}
+    appeals = sorted(set(ARK_NOVA_APPEAL_LADDER) | used)
+
+    rows = []
+    for zoo_map in ARK_NOVA_MAPS:
+        mine = [p for p in plays if p['zoo_map'] == zoo_map]
+        cells = []
+        for appeal in appeals:
+            at = [p for p in mine if p['start_appeal'] == appeal]
+            tally = _tally(at)
+            cells.append({'appeal': appeal, **tally,
+                          'stuck': tally['lost'] >= STUCK_AFTER_LOSSES
+                                   and tally['won'] == 0})
+        beaten = [p['start_appeal'] for p in mine
+                  if p['start_appeal'] is not None
+                  and 'won' in (p['result'] or '').lower()]
+        rows.append({
+            'map': zoo_map, 'cells': cells,
+            # The rung to beat next is the one above your best win.
+            'best_appeal': max(beaten) if beaten else None,
+            'no_appeal': _tally([p for p in mine if p['start_appeal'] is None]),
+            **_tally(mine),
+        })
+
+    unrecorded = sum(1 for p in plays if not p['zoo_map'])
+    return jsonify({
+        'appeals': appeals, 'maps': rows,
+        'stuck_after_losses': STUCK_AFTER_LOSSES,
+        'total_plays': len(plays),
+        'total_games': sum(1 for p in plays
+                           if 'won' in (p['result'] or '').lower()
+                           or 'lost' in (p['result'] or '').lower()),
+        'unrecorded_plays': unrecorded,
+    })
 
 
 @app.route('/api/ark_nova_options')

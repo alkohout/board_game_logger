@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ark Nova</title>
+    <link rel="stylesheet" href="./styles.css?v=18">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        /* Map against starting appeal. Eight columns won't fit a phone, so the
+           table scrolls inside its own box rather than the page doing it. */
+        .grid-wrap { overflow-x: auto; margin: 6px 0 4px; }
+        table.grid { border-collapse: collapse; width: 100%; min-width: 360px; }
+        table.grid th, table.grid td { padding: 6px 4px; text-align: center; }
+        table.grid th { font-size: 0.75em; color: #aaa; font-weight: normal; }
+        table.grid td.name, table.grid th.name {
+            text-align: left; white-space: nowrap; padding-right: 10px; font-size: 0.9em;
+        }
+        table.grid tbody tr { border-bottom: 1px solid rgba(255,255,255,0.07); }
+        .cell {
+            font-variant-numeric: tabular-nums; font-size: 0.85em;
+            min-width: 36px; border-radius: 3px;
+        }
+        .cell-none { color: #555; }
+        .cell-won  { background: rgba(144,238,144,0.16); color: #90EE90; }
+        .cell-open { background: rgba(255,213,79,0.13); color: #FFD54F; }
+        .cell-stuck{ background: rgba(255,138,128,0.20); color: #FF8A80; font-weight: bold; }
+        .unplayed td.name { color: #777; }
+        .best { color: #FFD54F; font-size: 0.8em; white-space: nowrap; }
+        .legend { color: #888; font-size: 0.78em; margin: 2px 0 14px; }
+        .legend span { margin-right: 12px; white-space: nowrap; }
+        .caption { color: #ccc; font-size: 0.9em; margin: 0 0 4px; }
+        .aside { color: #888; font-size: 0.82em; margin: 10px 0 0; }
+        .no-appeal { color: #888; font-size: 0.78em; }
+        .next-up { margin: 14px 0 0; padding: 9px 11px; border-left: 3px solid #FFD54F;
+                   background: rgba(255,213,79,0.07); font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
+    <div class="form-container">
+        <h2>Ark Nova</h2>
+        <p class="caption">Each map against the appeal you start the bot on.
+           Greyed out means never played on that rung.</p>
+        <p class="aside" style="margin:0 0 8px;">Won and lost count <em>finished</em>
+           games. A game left set up is logged more than once, so these are fewer
+           than the times you sat down to it.</p>
+        <div id="body"><p style="color:#aaa;">Loading...</p></div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script src="./tabs.js?v=18"></script>
+    <script>
+        requireAuth();
+        renderTabs('games');
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        // Won-lost rather than a tick: beaten once after five goes and beaten
+        // first go are different facts, and the difference is the point here.
+        function cell(c) {
+            if (!c.plays) return '<td class="cell cell-none">·</td>';
+            const cls = c.stuck ? 'cell-stuck' : c.won ? 'cell-won' : 'cell-open';
+            return `<td class="cell ${cls}" title="${c.won} won, ${c.lost} lost">
+                        ${c.won}–${c.lost}</td>`;
+        }
+
+        async function load() {
+            const data = await apiGet('/api/ark_nova_stats');
+            const body = document.getElementById('body');
+            if (!data) return;
+            if (data.success === false) {
+                body.innerHTML = `<p class="status-err">${esc(data.message || 'Not allowed.')}</p>`;
+                return;
+            }
+
+            const head = '<tr><th class="name">Map</th>' +
+                data.appeals.map(a => `<th>${a}</th>`).join('') +
+                '<th>Best</th></tr>';
+            const rows = data.maps.map(m => {
+                const extra = m.no_appeal.plays
+                    ? `<span class="no-appeal"> +${m.no_appeal.plays} no appeal</span>` : '';
+                return `<tr class="${m.plays ? '' : 'unplayed'}">
+                    <td class="name">Map ${esc(m.map)}${extra}</td>
+                    ${m.cells.map(cell).join('')}
+                    <td class="cell best">${m.best_appeal !== null ? m.best_appeal : ''}</td>
+                </tr>`;
+            }).join('');
+
+            const legend = `<p class="legend">
+                <span>Each cell is won–lost at that starting appeal.</span>
+                <span><span class="cell cell-none">·</span> never tried</span>
+                <span><span class="cell cell-open">0–1</span> tried, no win yet</span>
+                <span><span class="cell cell-won">1–0</span> beaten</span>
+                <span><span class="cell cell-stuck">0–${data.stuck_after_losses}</span>
+                      ${data.stuck_after_losses}+ losses and no win — maybe drop back</span></p>`;
+
+            // The obvious next rung: one step above your best win on each map
+            // you've actually beaten something on.
+            const climbed = data.maps.filter(m => m.best_appeal !== null);
+            const next = climbed.length
+                ? `<p class="next-up"><strong>Next rung up:</strong> ` +
+                  climbed.map(m => {
+                      const above = data.appeals.find(a => a > m.best_appeal);
+                      return above === undefined
+                          ? `Map ${esc(m.map)} — nothing higher on the ladder`
+                          : `Map ${esc(m.map)} at ${above}`;
+                  }).join(' · ') + `</p>`
+                : '';
+
+            const gap = data.unrecorded_plays
+                ? `<p class="aside">${data.total_games} finished games from
+                     ${data.total_plays} sittings; ${data.unrecorded_plays} don't record a
+                     map, so they appear in no row above. Newly logged ones will.</p>`
+                : '';
+
+            body.innerHTML =
+                `<div class="grid-wrap"><table class="grid">
+                    <thead>${head}</thead><tbody>${rows}</tbody></table></div>` +
+                legend + next + gap;
+        }
+        load();
+    </script>
+</body>
+</html>
