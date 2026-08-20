@@ -204,7 +204,8 @@ EXPECTED_COLUMNS = {
     'users': ('token_version',),
     # add_game writes the Spirit Island columns on every insert, so code
     # deployed ahead of migration 012 would fail to log any game at all.
-    'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario'),
+    'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario',
+              'civilisation'),
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
@@ -750,10 +751,10 @@ def search_last_played():
     # One row, one query — this was five round trips for five columns of the
     # same row, and adding the Spirit Island fields would have made it eight.
     cur.execute("""SELECT notes, result, level, my_score, bot_score,
-                          spirit, adversary, adversary_level, scenario
+                          spirit, adversary, adversary_level, scenario, civilisation
                    FROM games WHERE id = %s""", (last_played[1],))
     (notes, result, level, my_score, bot_score,
-     spirit, adversary, adversary_level, scenario) = cur.fetchone()
+     spirit, adversary, adversary_level, scenario, civilisation) = cur.fetchone()
 
     # Fetch total number of times the game was played
     cur.execute("SELECT COUNT(*) FROM games WHERE game_title ILIKE %s", (f"%{game_title}%",))
@@ -827,6 +828,7 @@ def search_last_played():
             'adversary': adversary,
             'adversary_level': adversary_level,
             'scenario': scenario,
+            'civilisation': civilisation,
             'date_played': last_played[0].isoformat(),
             'date_played_nonempty': date_nonempty.isoformat() if date_nonempty else None,
             'notes_nonempty': notes_nonempty if notes_nonempty else None,
@@ -1781,10 +1783,11 @@ def api_add_game():
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score,"
-            " spirit, adversary, adversary_level, scenario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " spirit, adversary, adversary_level, scenario, civilisation)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
-             spirit, adversary, level, scenario)
+             spirit, adversary, level, scenario, imperium_civilisation(data))
         )
         conn.commit()
         cur.close()
@@ -2140,6 +2143,23 @@ def sleeping_gods_category(name):
 
 
 
+def imperium_civilisation(data):
+    """The deck faced, validated against the official list.
+
+    Same rule as the Spirit Island pickers: only a name we know is stored, so
+    the stats page can count on it rather than parsing prose.
+    """
+    value = (data.get('civilisation') or '').strip()
+    return next((n for _, n, _ in IMPERIUM_CIVS if n.lower() == value.lower()), None)
+
+
+@app.route('/api/imperium_options')
+def api_imperium_options():
+    """The civilisation picker on the log form."""
+    return jsonify({'civilisations': [
+        {'name': n, 'expansion': e, 'stars': st} for e, n, st in IMPERIUM_CIVS]})
+
+
 def spirit_island_fields(data):
     """Validate the Spirit Island pickers off a request body.
 
@@ -2168,7 +2188,7 @@ def spirit_island_fields(data):
 
 PLAY_COLUMNS = ('id', 'date_played', 'game_title', 'result', 'level', 'my_score',
                 'bot_score', 'notes', 'spirit', 'adversary', 'adversary_level',
-                'scenario')
+                'scenario', 'civilisation')
 
 
 def play_row(row):
@@ -2286,11 +2306,12 @@ def api_update_play():
             UPDATE games SET date_played = %s, result = %s, level = %s,
                              my_score = %s, bot_score = %s, notes = %s,
                              spirit = %s, adversary = %s, adversary_level = %s,
-                             scenario = %s
+                             scenario = %s, civilisation = %s
             WHERE id = %s
         """, (data.get('date_played'), data.get('result', ''), data.get('level', ''),
               data.get('my_score', ''), data.get('bot_score', ''), data.get('notes', ''),
-              spirit, adversary, level, scenario, play_id))
+              spirit, adversary, level, scenario,
+              imperium_civilisation(data), play_id))
         if cur.rowcount != 1:
             conn.rollback()
             cur.close(); conn.close()
@@ -2351,6 +2372,45 @@ def api_spirit_island_stats():
     })
 
 
+# Imperium: you always play Romans, so the deck that varies is the opponent's.
+# Romans is deliberately absent from IMPERIUM_CIVS, which is why "Romans (me)"
+# can never be read as the deck faced.
+_IMPERIUM_SPLIT = re.compile(r'\bv(?:s|ersus)\b\.?', re.I)
+
+
+def imperium_civ_from_text(text):
+    """Pull the opponent deck out of a free-text Imperium note.
+
+    Used both to read plays logged before there was a field for it, and to
+    backfill them. Singular spellings count: eleven plays were written
+    "Viking", "Greek", "Carthaginian", and the old exact matching dropped them.
+    Anything after "vs"/"versus" wins, since what comes before it is you.
+    """
+    whole = (text or '').lower()
+    if not whole:
+        return None
+    parts = _IMPERIUM_SPLIT.split(whole, maxsplit=1)
+    hay = parts[1] if len(parts) > 1 else whole
+    best = None
+    for _, name, _ in IMPERIUM_CIVS:
+        low = name.lower()
+        forms = [low] + ([low[:-1]] if low.endswith('s') else [])
+        for form in forms:
+            if re.search(r'\b' + re.escape(form) + r'\b', hay):
+                # Longest wins, so "Qin" can't shadow a longer name sharing it.
+                if best is None or len(form) > len(best[1]):
+                    best = (name, form)
+                break
+    return best[0] if best else None
+
+
+def imperium_civ_of(play):
+    """The deck faced: the recorded field if set, else the old free text."""
+    if play.get('civilisation'):
+        return play['civilisation']
+    return imperium_civ_from_text(play.get('level'))
+
+
 @app.route('/api/imperium_stats')
 def api_imperium_stats():
     # The imperium view reads `games` with security_invoker, so it has always
@@ -2360,28 +2420,44 @@ def api_imperium_stats():
     cur = conn.cursor()
     # One pass over the plays; the per-civilisation tally happens here rather
     # than in the 56 separate count queries the old page used.
-    cur.execute("SELECT level, result FROM imperium")
-    plays = [((r[0] or '').lower(), (r[1] or '').lower()) for r in cur.fetchall()]
+    cur.execute("SELECT level, result, civilisation FROM imperium")
+    plays = [{'level': r[0], 'result': r[1], 'civilisation': r[2]}
+             for r in cur.fetchall()]
     cur.close()
     conn.close()
 
+    # The recorded deck if there is one, otherwise read the old free text.
+    # Resolved once per play so a play can never be counted under two decks.
+    for p in plays:
+        p['civ'] = imperium_civ_of(p)
+        p['res'] = (p['result'] or '').lower()
+
     expansions = []
     for expansion, name, stars in IMPERIUM_CIVS:
-        key = name.lower()
-        won = sum(1 for lvl, res in plays if key in lvl and 'won' in res)
-        lost = sum(1 for lvl, res in plays if key in lvl and 'lost' in res)
+        mine = [p for p in plays if p['civ'] == name]
         if not expansions or expansions[-1]['expansion'] != expansion:
             expansions.append({'expansion': expansion, 'civilisations': []})
-        expansions[-1]['civilisations'].append(
-            {'name': name, 'stars': stars, 'won': won, 'lost': lost})
+        expansions[-1]['civilisations'].append({
+            'name': name, 'stars': stars,
+            'won': sum(1 for p in mine if 'won' in p['res']),
+            'lost': sum(1 for p in mine if 'lost' in p['res']),
+            # Plays counts every game against this deck, recorded result or
+            # not — the same reason the Spirit Island page shows it.
+            'plays': len(mine),
+            # How many still rely on the free text. Zero once backfilled, and
+            # worth seeing if it ever climbs again.
+            'from_text': sum(1 for p in mine if not p['civilisation']),
+        })
 
-    # Plays whose level matches no known civilisation — a new expansion, or a typo.
-    known = [name.lower() for _, name, _ in IMPERIUM_CIVS]
-    unmatched = sorted({lvl.strip() for lvl, _ in plays
-                        if lvl.strip() and not any(k in lvl for k in known)})
+    # Text that names no known deck: a new expansion, a typo, or a play with no
+    # opponent recorded at all.
+    unmatched = sorted({(p['level'] or '').strip() for p in plays
+                        if (p['level'] or '').strip() and not p['civ']})
 
     return jsonify({'expansions': expansions, 'unmatched_levels': unmatched,
-                    'total_plays': len(plays)})
+                    'total_plays': len(plays),
+                    'recorded': sum(1 for p in plays if p['civilisation']),
+                    'from_text': sum(1 for p in plays if p['civ'] and not p['civilisation'])})
 
 
 @app.route('/api/sleeping_gods_totems_data')

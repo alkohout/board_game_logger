@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=13">
+    <link rel="stylesheet" href="./styles.css?v=14">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -116,6 +116,13 @@
         </div>
         <label>Scenario:</label>
         <select id="scenario"><option value="">—</option></select>
+    </div>
+    <!-- Imperium: you always play Romans, so the deck that varies is the
+         opponent's. One field, for the same reason Spirit Island has four —
+         it's what the stats page counts. -->
+    <div id="imp-fields" style="display:none;">
+        <label>Opponent civilisation:</label>
+        <select id="civilisation"><option value="">—</option></select>
     </div>
     <label>Level:</label>
     <textarea id="level" rows="2" placeholder="Add level here..."></textarea>
@@ -294,7 +301,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=13"></script>
+<script src="./tabs.js?v=14"></script>
 <script>
 requireAuth();
 
@@ -490,10 +497,32 @@ setupAutocomplete('selector_game_title', 'selector_suggestions');
 // Spirit Island fields. Fetched once, the first time a Spirit Island title is
 // typed, so every other game pays nothing for them.
 const SI_FIELDS = ['spirit', 'adversary', 'adversary_level', 'scenario'];
+const IMP_FIELDS = ['civilisation'];
 let siLoaded = false;
+let impLoaded = false;
 
 function isSpiritIsland(title) {
     return /spirit\s*island/i.test(title);
+}
+
+function isImperium(title) {
+    return /imperium/i.test(title);
+}
+
+async function fillImperium() {
+    if (impLoaded) return;
+    const opts = await apiGet('/api/imperium_options');
+    if (!opts) return;
+    impLoaded = true;
+    // Grouped by expansion with the difficulty stars, so the list reads the
+    // same way the stats page does.
+    const groups = {};
+    opts.civilisations.forEach(c => (groups[c.expansion] ||= []).push(c));
+    document.getElementById('civilisation').innerHTML = '<option value="">—</option>' +
+        Object.entries(groups).map(([exp, list]) =>
+            `<optgroup label="${escapeHtml(exp)}">` + list.map(c =>
+                `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} ${'★'.repeat(c.stars)}</option>`
+            ).join('') + '</optgroup>').join('');
 }
 
 async function fillSpiritIsland() {
@@ -513,9 +542,13 @@ async function fillSpiritIsland() {
 }
 
 function toggleSpiritIsland() {
-    const on = isSpiritIsland(document.getElementById('game_title').value);
-    document.getElementById('si-fields').style.display = on ? '' : 'none';
-    if (on) fillSpiritIsland();
+    const title = document.getElementById('game_title').value;
+    const si = isSpiritIsland(title);
+    document.getElementById('si-fields').style.display = si ? '' : 'none';
+    if (si) fillSpiritIsland();
+    const imp = isImperium(title);
+    document.getElementById('imp-fields').style.display = imp ? '' : 'none';
+    if (imp) fillImperium();
 }
 document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
 // Picking from the dropdown sets .value in code, which fires no input event —
@@ -543,6 +576,9 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     if (isSpiritIsland(title)) {
         SI_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
     }
+    if (isImperium(title)) {
+        IMP_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
+    }
     const data = await apiPost('/api/add_game', payload);
     btn.disabled = false;
     if (data?.success) {
@@ -550,8 +586,9 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         status.className = 'status-ok';
         status.style.display = '';
         ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
-        SI_FIELDS.forEach(id => document.getElementById(id).value = '');
+        SI_FIELDS.concat(IMP_FIELDS).forEach(id => document.getElementById(id).value = '');
         document.getElementById('si-fields').style.display = 'none';
+        document.getElementById('imp-fields').style.display = 'none';
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
@@ -591,7 +628,8 @@ function giPairs(pairs) {
 function giSpiritIsland(p) {
     const adv = p.adversary
         ? p.adversary + (p.adversary_level ? ` (level ${p.adversary_level})` : '') : '';
-    return [['Spirit', p.spirit], ['Adversary', adv], ['Scenario', p.scenario]];
+    return [['Spirit', p.spirit], ['Adversary', adv], ['Scenario', p.scenario],
+            ['Civilisation', p.civilisation]];
 }
 
 function renderProgress(p) {
@@ -654,10 +692,23 @@ async function renderEdit(p, title) {
                 <select id="gi-scenario">${opts(src('scenario'), p.scenario)}</select></div>`;
     }
 
+    // The same one-field treatment for Imperium, prefilled from the play.
+    let imp = '';
+    if (isImperium(title)) {
+        await fillImperium();
+        const src = [...document.getElementById('civilisation').options];
+        imp = `<div class="gi-field"><label>Opponent civilisation</label>
+                <select id="gi-civilisation">` +
+              src.map(o => `<option value="${escapeHtml(o.value)}"${
+                  o.value === (p.civilisation || '') ? ' selected' : ''
+              }>${escapeHtml(o.textContent)}</option>`).join('') +
+              `</select></div>`;
+    }
+
     document.getElementById('gi-edit').innerHTML =
         `<div class="gi-field"><label for="gi-date_played">Date played</label>
          <input type="date" id="gi-date_played" value="${escapeHtml(p.date_played || '')}"></div>` +
-        field('result', 'Result', p.result) + si +
+        field('result', 'Result', p.result) + si + imp +
         field('level', 'Level', p.level, 2) +
         field('my_score', 'My score', p.my_score) +
         field('bot_score', 'Bot score', p.bot_score) +
@@ -707,6 +758,7 @@ document.getElementById('gi-save').addEventListener('click', async () => {
         my_score: val('my_score'), bot_score: val('bot_score'), notes: val('notes'),
         spirit: val('spirit'), adversary: val('adversary'),
         adversary_level: val('adversary_level'), scenario: val('scenario'),
+        civilisation: val('civilisation'),
     });
     btn.disabled = false;
     status.style.display = '';
