@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=23">
+    <link rel="stylesheet" href="./styles.css?v=24">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -28,6 +28,7 @@
         .ares-grid td { padding: 2px 4px; font-size: 0.85em; color: #ccc; }
         .ares-grid td:first-child { white-space: nowrap; width: 34%; }
         .ares-grid input { width: 100%; margin: 0; padding: 6px 4px; text-align: center; }
+        .ares-grid td.target { text-align: center; color: #FFD54F; font-weight: bold; }
 
         /* "More" as a scannable list. Full-width rows beat a wrapping row of
            buttons once there are more than about four, and there is room for a
@@ -173,24 +174,22 @@
     <div id="ares-fields" style="display:none;">
         <label>End state:</label>
         <table class="ares-grid">
-            <thead><tr><th></th><th>You</th><th>Bot</th></tr></thead>
+            <thead><tr><th></th><th>You</th><th>Target</th></tr></thead>
             <tbody>
                 <tr><td>Temperature</td>
                     <td><input type="number" id="ares_temp_me" min="-40" max="20" step="1"></td>
-                    <td><input type="number" id="ares_temp_bot" min="-40" max="20" step="1"></td></tr>
+                    <td class="target">8</td></tr>
                 <tr><td>Oxygen %</td>
                     <td><input type="number" id="ares_oxygen_me" min="0" max="20" step="1"></td>
-                    <td><input type="number" id="ares_oxygen_bot" min="0" max="20" step="1"></td></tr>
+                    <td class="target">14</td></tr>
                 <tr><td>Oceans</td>
                     <td><input type="number" id="ares_oceans_me" min="0" max="12" step="1"></td>
-                    <td><input type="number" id="ares_oceans_bot" min="0" max="12" step="1"></td></tr>
+                    <td class="target">9</td></tr>
                 <tr><td>MC</td>
                     <td><input type="number" id="ares_mc_me" min="0" max="999" step="1"></td>
-                    <td><input type="number" id="ares_mc_bot" min="0" max="999" step="1"></td></tr>
+                    <td class="target">—</td></tr>
             </tbody>
         </table>
-        <button type="button" id="ares-terraformed" class="btn-blue"
-                style="font-size:0.8em; padding:6px 10px;">Bot fully terraformed</button>
     </div>
     <!-- Games climbed a rung at a time. Shown for those, not for everything. -->
     <div id="lad-fields" style="display:none;">
@@ -198,10 +197,15 @@
         <input type="number" id="scenario_number" min="1" max="999" step="1"
                placeholder="e.g. 9" inputmode="numeric">
     </div>
-    <label>My Score:</label>
-    <textarea id="my_score" rows="1" placeholder="Add my score here..."></textarea>
-    <label>Bot Score:</label>
-    <textarea id="bot_score" rows="1" placeholder="Add bot score here..."></textarea>
+    <!-- Hidden for games whose own fields already carry the numbers. Imperium
+         and Cascadia genuinely use these; Spirit Island and Sleeping Gods never
+         have, and Ares now records its parameters properly. -->
+    <div id="score-fields">
+        <label>My Score:</label>
+        <textarea id="my_score" rows="1" placeholder="Add my score here..."></textarea>
+        <label>Bot Score:</label>
+        <textarea id="bot_score" rows="1" placeholder="Add bot score here..."></textarea>
+    </div>
     <label>Notes:</label>
     <textarea id="notes" rows="4" placeholder="Add any notes here..."></textarea>
     <button id="log-btn">Log Game</button>
@@ -381,7 +385,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=23"></script>
+<script src="./tabs.js?v=24"></script>
 <script>
 requireAuth();
 
@@ -585,8 +589,9 @@ const SI_FIELDS = ['spirit', 'adversary', 'adversary_level', 'scenario'];
 const IMP_FIELDS = ['civilisation', 'my_civilisation'];
 const AN_FIELDS = ['zoo_map', 'start_appeal'];
 const LADDER_FIELDS = ['scenario_number'];
-const ARES_FIELDS = ['temp', 'oxygen', 'oceans', 'mc']
-    .flatMap(k => [`ares_${k}_me`, `ares_${k}_bot`]);
+// Only your side is recorded. The other column is the win condition, which is
+// fixed at 8 C / 14% / 9 oceans and was only ever being restated.
+const ARES_FIELDS = ['temp', 'oxygen', 'oceans', 'mc'].map(k => `ares_${k}_me`);
 let diffLoaded = false;
 let siLoaded = false;
 let impLoaded = false;
@@ -609,6 +614,12 @@ function isArkNova(title) {
 // anything else can join by name without touching the rest.
 function isAres(title) {
     return /ares\s*expedition/i.test(title);
+}
+
+// Games where a plain score means nothing, either because the game has no
+// score or because its own fields already hold the numbers.
+function scoresAreRedundant(title) {
+    return /spirit\s*island|sleeping\s*gods|ares\s*expedition/i.test(title);
 }
 
 function isLadderGame(title) {
@@ -691,15 +702,9 @@ function toggleSpiritIsland() {
     const lad = isLadderGame(title);
     document.getElementById('lad-fields').style.display = lad ? '' : 'none';
     document.getElementById('ares-fields').style.display = isAres(title) ? '' : 'none';
+    document.getElementById('score-fields').style.display =
+        scoresAreRedundant(title) ? 'none' : '';
 }
-// The bot ends fully terraformed in almost every recorded game, so filling
-// its three boxes by hand each time is pure tedium.
-document.getElementById('ares-terraformed').addEventListener('click', () => {
-    document.getElementById('ares_temp_bot').value = 8;
-    document.getElementById('ares_oxygen_bot').value = 14;
-    document.getElementById('ares_oceans_bot').value = 9;
-});
-
 document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
 // Picking from the dropdown sets .value in code, which fires no input event —
 // setupAutocomplete dispatches change for exactly this reason.
@@ -716,10 +721,12 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     const payload = {
         date_played: dp, game_title: title,
         result: document.getElementById('result').value,
-        my_score: document.getElementById('my_score').value,
-        bot_score: document.getElementById('bot_score').value,
         notes: document.getElementById('notes').value
     };
+    if (!scoresAreRedundant(title)) {
+        payload.my_score = document.getElementById('my_score').value;
+        payload.bot_score = document.getElementById('bot_score').value;
+    }
     // Only send them for a Spirit Island play; the API ignores unknown names
     // anyway, but there is no reason to send four empty fields every time.
     if (isSpiritIsland(title)) {
@@ -757,6 +764,7 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         document.getElementById('an-fields').style.display = 'none';
         document.getElementById('lad-fields').style.display = 'none';
         document.getElementById('ares-fields').style.display = 'none';
+        document.getElementById('score-fields').style.display = '';
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
