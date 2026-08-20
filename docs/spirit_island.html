@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Spirit Island Stats</title>
-    <link rel="stylesheet" href="./styles.css?v=19">
+    <link rel="stylesheet" href="./styles.css?v=20">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -12,8 +12,16 @@
         table.si th, table.si td { padding: 6px 8px; }
         table.si thead th { font-size: 0.8em; color: #aaa; text-align: right; }
         table.si thead th:first-child { text-align: left; }
-        .exp-row td {
-            padding-top: 18px; font-weight: bold; color: #FFD54F;
+        /* One expansion header for every table on the page. Written at a
+           specificity that beats each table's own cell rule, because that is
+           what made these drift: table.grid centres its cells and table.si
+           doesn't, and the header row was quietly inheriting whichever.
+           Left, matching the Scenarios and Spirits tables — a header spanning
+           the row reads better against the left edge than floating mid-table. */
+        table.si .exp-row td,
+        table.grid .exp-row td {
+            padding: 18px 8px 6px; text-align: left;
+            font-weight: bold; color: #FFD54F;
             border-bottom: 1px solid rgba(255,255,255,0.2);
         }
         .row td { border-bottom: 1px solid rgba(255,255,255,0.07); }
@@ -84,7 +92,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=19"></script>
+    <script src="./tabs.js?v=20"></script>
     <script>
         requireAuth();
         renderTabs('games');
