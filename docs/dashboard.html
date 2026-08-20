@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=18">
+    <link rel="stylesheet" href="./styles.css?v=19">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -21,6 +21,27 @@
         .kv dd { margin: 0; overflow-wrap: anywhere; }
         .kv-rule { border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 10px 0; }
         .kv-notes { margin: 10px 0 0; font-size: 0.9em; overflow-wrap: anywhere; }
+
+        /* "More" as a scannable list. Full-width rows beat a wrapping row of
+           buttons once there are more than about four, and there is room for a
+           line saying what each one actually shows. */
+        .more-head {
+            margin: 14px 0 6px; font-size: 0.78em; text-transform: uppercase;
+            letter-spacing: 0.07em; color: #FFD54F;
+        }
+        .more-head:first-of-type { margin-top: 4px; }
+        .more-list { display: flex; flex-direction: column; }
+        .more-item {
+            display: block; padding: 10px 12px; text-decoration: none; color: inherit;
+            border: 1px solid rgba(255,255,255,0.14); border-radius: 6px;
+            margin-bottom: 6px; background: rgba(255,255,255,0.03);
+        }
+        .more-item:hover, .more-item:focus {
+            background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.3);
+        }
+        .more-name { display: block; font-weight: bold; font-size: 0.95em; }
+        .more-name::after { content: ' ›'; color: #888; font-weight: normal; }
+        .more-blurb { display: block; color: #aaa; font-size: 0.8em; margin-top: 1px; }
 
         /* Game Info: three cards under one search — where you're up to, the
            record, and the last play as an editable form. */
@@ -225,14 +246,22 @@
 
 <div class="form-container">
     <h2>More</h2>
-    <nav>
-        <button onclick="window.location.href='./games_overview.html'">Games Overview</button>
-        <button onclick="window.location.href='./all_games.html'">All Games Ranked</button>
-        <!-- Per-game trackers, filled in by loadMe(): each appears only once
-             this account has logged a play of that game. All three read
-             row-level-secured tables, so they show your own campaign. -->
-        <span id="tracker-nav"></span>
-    </nav>
+    <!-- A list rather than a row of buttons: there are enough of these now that
+         they need scanning down, and each gets a line saying what it is. -->
+    <p class="more-head">Across all games</p>
+    <div class="more-list">
+        <a class="more-item" href="./games_overview.html">
+            <span class="more-name">Games Overview</span>
+            <span class="more-blurb">Most played by week, month and year</span></a>
+        <a class="more-item" href="./all_games.html">
+            <span class="more-name">All Games Ranked</span>
+            <span class="more-blurb">Every game by how often you've played it</span></a>
+    </div>
+    <!-- Per-game trackers, filled in by loadMe(): each appears only once this
+         account has logged a play of that game, and all read row-level-secured
+         tables, so they show your own campaign. -->
+    <p class="more-head" id="tracker-head" style="display:none;">Games you're tracking</p>
+    <div class="more-list" id="tracker-nav"></div>
 </div>
 </div>
 
@@ -312,7 +341,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=18"></script>
+<script src="./tabs.js?v=19"></script>
 <script>
 requireAuth();
 
@@ -432,8 +461,12 @@ async function loadMe() {
     }
 
     // A tracker button per game this account has actually played.
-    document.getElementById('tracker-nav').innerHTML = (data.trackers || []).map(t =>
-        `<button onclick="window.location.href='./${t.page}'">${escapeHtml(t.label)}</button>`
+    const trackers = data.trackers || [];
+    document.getElementById('tracker-head').style.display = trackers.length ? '' : 'none';
+    document.getElementById('tracker-nav').innerHTML = trackers.map(t =>
+        `<a class="more-item" href="./${escapeHtml(t.page)}">
+            <span class="more-name">${escapeHtml(t.label)}</span>
+            <span class="more-blurb">${escapeHtml(t.blurb || '')}</span></a>`
     ).join('');
 
     if (me.is_owner) {

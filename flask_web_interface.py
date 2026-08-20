@@ -1433,14 +1433,14 @@ def api_login():
 # only appears once an account has logged a play of it — advertising a page for
 # a game someone doesn't own is just clutter.
 GAME_TRACKERS = [
-    {'key': 'spirit_island',  'label': 'Spirit Island',    'page': 'spirit_island.html',
-     'match': '%spirit island%'},
-    {'key': 'imperium',       'label': 'Imperium Stats',   'page': 'imperium.html',
-     'match': '%imperium%'},
-    {'key': 'sleeping_gods',  'label': 'Sleeping Gods Log', 'page': 'sleeping_gods.html',
-     'match': '%sleeping gods%'},
-    {'key': 'ark_nova',       'label': 'Ark Nova',         'page': 'ark_nova.html',
-     'match': '%ark nova%'},
+    {'key': 'spirit_island', 'label': 'Spirit Island', 'page': 'spirit_island.html',
+     'blurb': 'Spirits, adversaries and scenarios', 'match': '%spirit island%'},
+    {'key': 'imperium', 'label': 'Imperium', 'page': 'imperium.html',
+     'blurb': 'Decks faced, and how they went', 'match': '%imperium%'},
+    {'key': 'sleeping_gods', 'label': 'Sleeping Gods', 'page': 'sleeping_gods.html',
+     'blurb': 'Locations, totems and endings', 'match': '%sleeping gods%'},
+    {'key': 'ark_nova', 'label': 'Ark Nova', 'page': 'ark_nova.html',
+     'blurb': 'Maps and starting appeal', 'match': '%ark nova%'},
 ]
 
 
@@ -1459,7 +1459,8 @@ def api_me():
         ) + ' FROM games', [t['match'] for t in GAME_TRACKERS])
     played = cur.fetchone()
     payload['trackers'] = [
-        {'key': t['key'], 'label': t['label'], 'page': t['page']}
+        {'key': t['key'], 'label': t['label'], 'page': t['page'],
+         'blurb': t['blurb']}
         for t, has in zip(GAME_TRACKERS, played) if has
     ]
 
