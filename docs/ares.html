@@ -4,16 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ares Expedition</title>
-    <link rel="stylesheet" href="./styles.css?v=26">
+    <link rel="stylesheet" href="./styles.css?v=27">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
-        .wrap { overflow-x: auto; }
+        /* Its own scroll box, vertical as well as horizontal: a sticky header
+           anchors to the nearest scrolling ancestor, and the horizontal-scroll
+           wrapper was already that — so page scroll would never have moved it. */
+        .wrap { max-height: 66vh; overflow: auto; }
         table.ares { border-collapse: collapse; width: 100%; min-width: 420px; }
         table.ares th, table.ares td { padding: 7px 6px; }
         table.ares thead th {
             font-size: 0.74em; color: #aaa; font-weight: normal; text-align: center;
+            position: sticky; top: 0; z-index: 1;
+            background: #1b1b1b; box-shadow: 0 1px 0 rgba(255,255,255,0.18);
         }
+        /* The number each column is aiming at, kept in view while you scroll. */
+        .tgt { display: block; color: #FFD54F; font-weight: bold; font-size: 1.05em; }
+        .tgt-none { display: block; color: #555; font-size: 1.05em; }
         table.ares thead th.left { text-align: left; }
         table.ares tbody tr { border-bottom: 1px solid rgba(255,255,255,0.07); }
         .date { white-space: nowrap; font-size: 0.85em; }
@@ -37,10 +45,14 @@
         .axis { stroke: rgba(255,255,255,0.18); stroke-width: 1; }
         .grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
         .tick { fill: #888; font-size: 7px; }
-        .series { fill: none; stroke-width: 1.5; }
+        .series { fill: none; stroke-width: 1.2; }
+        .faint { opacity: 0.35; }
+        .total { fill: none; stroke: #FFD54F; stroke-width: 2.2; }
+        .total-dot { fill: #FFD54F; }
         .grid-target { stroke: rgba(144,238,144,0.35); stroke-width: 1; stroke-dasharray: 3 2; }
         .winmark { fill: #90EE90; }
         .winmark-key { color: #90EE90; }
+        .faint-key { opacity: 0.6; }
         .chart-note { color: #888; font-size: 0.78em; margin: 2px 0 12px; }
         .chart-note span { margin-right: 12px; white-space: nowrap; }
     </style>
@@ -54,9 +66,8 @@
 
     <div class="form-container">
         <h2>Ares Expedition</h2>
-        <p class="caption">Where each finished game ended up. Terraformed is
-           <strong>8&deg;C, 14% oxygen, 9 oceans</strong> — green means that
-           parameter got there.</p>
+        <p class="caption">Where each finished game ended up. The yellow figures
+           are the targets; green means that parameter got there.</p>
         <div id="body"><p style="color:#aaa;">Loading...</p></div>
     </div>
 
@@ -64,7 +75,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=26"></script>
+    <script src="./tabs.js?v=27"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -103,9 +114,8 @@
                 <text class="tick" x="${L - 3}" y="${(y(v) + 2.5).toFixed(1)}"
                       text-anchor="end">${v}%</text>`).join('');
 
-            // One line per parameter. A game missing that parameter breaks the
-            // line rather than being drawn at zero, which would read as a
-            // collapse that never happened.
+            // The three parameters, faint. They're the detail behind the total —
+            // useful for spotting which one lags, but not the thing being read.
             const series = PARAMS.map(p => {
                 const pts = games.map((g, i) => g.me[p.key] === null || g.me[p.key] === undefined
                     ? null : { x: x(i), y: y(pct(p, g.me[p.key])), g });
@@ -114,14 +124,31 @@
                 pts.forEach(pt => { if (pt) { run.push(pt); } else if (run.length) { runs.push(run); run = []; } });
                 if (run.length) runs.push(run);
                 const lines = runs.map(r =>
-                    `<polyline class="series" stroke="${p.colour}"
+                    `<polyline class="series faint" stroke="${p.colour}"
                                points="${r.map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ')}"/>`).join('');
                 const dots = pts.filter(Boolean).map(q => `
-                    <circle r="2.6" fill="${p.colour}" cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}">
+                    <circle class="faint" r="2" fill="${p.colour}"
+                            cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}">
                         <title>${esc(q.g.date)} — ${esc(p.label)} ${q.g.me[p.key]}${p.key === 'oxygen' ? '%' : ''}</title>
                     </circle>`).join('');
                 return lines + dots;
             }).join('');
+
+            // The total, which is what the chart is for. Drawn over the top and
+            // broken wherever a game didn't record all three, since there is no
+            // honest total for those.
+            const totalPts = games.map((g, i) => g.progress === null || g.progress === undefined
+                ? null : { x: x(i), y: y(g.progress), g });
+            const totalRuns = [];
+            let tr = [];
+            totalPts.forEach(pt => { if (pt) { tr.push(pt); } else if (tr.length) { totalRuns.push(tr); tr = []; } });
+            if (tr.length) totalRuns.push(tr);
+            const total = totalRuns.map(r =>
+                `<polyline class="total" points="${r.map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ')}"/>`
+            ).join('') + totalPts.filter(Boolean).map(q => `
+                <circle class="total-dot" r="3.2" cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}">
+                    <title>${esc(q.g.date)} — ${q.g.progress}% achieved${q.g.won ? ', won' : ''}</title>
+                </circle>`).join('');
 
             // A win is marked on the axis rather than by recolouring a point —
             // the colours are already saying which parameter is which.
@@ -135,15 +162,17 @@
                         aria-label="Each global parameter as a percentage of its target, over time">
                     ${gridlines}
                     <line class="axis" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}"/>
-                    ${series}${wins}
+                    ${series}${total}${wins}
                     <text class="tick" x="${L}" y="${H - 4}">${esc(first)}</text>
                     <text class="tick" x="${W - R}" y="${H - 4}" text-anchor="end">${esc(last)}</text>
                 </svg></div>
                 <p class="chart-note">
-                    ${PARAMS.map(p => `<span><span style="color:${p.colour}; font-size:1.2em;">●</span>
+                    <span><span style="color:#FFD54F; font-size:1.3em;">●</span>
+                        <strong>Total achieved</strong></span>
+                    ${PARAMS.map(p => `<span class="faint-key"><span
+                        style="color:${p.colour}; font-size:1.2em;">●</span>
                         ${esc(p.label)}</span>`).join('')}
-                    <span><span class="winmark-key">▲</span> won</span>
-                    <span>100% is that parameter finished.</span></p>`;
+                    <span><span class="winmark-key">▲</span> won</span></p>`;
         }
 
         async function load() {
@@ -210,8 +239,11 @@
                 `<div class="wrap"><table class="ares">
                     <thead>
                         <tr><th class="left">Date</th><th></th><th>Diff</th>
-                            <th>°C</th><th>O₂</th><th>Oc</th><th>MC</th>
-                            <th class="sep">Achieved</th></tr>
+                            <th>°C<span class="tgt">${t.temp}</span></th>
+                            <th>O₂<span class="tgt">${t.oxygen}</span></th>
+                            <th>Oc<span class="tgt">${t.oceans}</span></th>
+                            <th>MC<span class="tgt-none">—</span></th>
+                            <th class="sep">Achieved<span class="tgt">100%</span></th></tr>
                     </thead>
                     <tbody>${rows}</tbody>
                  </table></div>` + headline + gap;
