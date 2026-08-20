@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Spirit Island Stats</title>
-    <link rel="stylesheet" href="./styles.css?v=15">
+    <link rel="stylesheet" href="./styles.css?v=16">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -75,8 +75,8 @@
         <p class="caption">Base game, Branch &amp; Claw, Jagged Earth and Nature Incarnate.
            Greyed out means never played.</p>
         <p class="aside" style="margin:0 0 8px;">Won and lost count <em>finished</em>
-           games. A game left set up gets logged more than once, so sittings are
-           counted separately and will always be the larger number.</p>
+           games. A game left set up is logged more than once, so these are fewer
+           than the times you sat down to it.</p>
         <div id="body"><p style="color:#aaa;">Loading...</p></div>
     </div>
 
@@ -84,7 +84,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=15"></script>
+    <script src="./tabs.js?v=16"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -109,7 +109,6 @@
                         <td>${esc(s.name)}${best}</td>
                         <td class="num lost">${s.lost || ''}</td>
                         <td class="num won">${s.won || ''}</td>
-                        <td class="num">${s.plays || ''}</td>
                     </tr>`;
                   }).join('')
                 : '';
@@ -127,22 +126,20 @@
                         <td>${esc(it.name)}${best}${only}</td>
                         <td class="num lost">${it.lost || ''}</td>
                         <td class="num won">${it.won || ''}</td>
-                        <td class="num">${it.plays || ''}</td>
                     </tr>${spiritRows(it)}`;
                 }).join('');
-                return `<tr class="exp-row"><td colspan="4">${esc(group.product)}</td></tr>${items}`;
+                return `<tr class="exp-row"><td colspan="3">${esc(group.product)}</td></tr>${items}`;
             }).join('');
 
             return `<h3 style="margin:22px 0 0;">${esc(title)}</h3>
                 <table class="si">
-                    <thead><tr><th></th><th>Lost</th><th>Won</th><th>Sittings</th></tr></thead>
+                    <thead><tr><th></th><th>Lost</th><th>Won</th></tr></thead>
                     <tbody>
                         ${body}
                         <tr class="totals">
-                            <td>Total</td>
+                            <td>Total — ${won + lost} finished</td>
                             <td class="num lost">${lost}</td>
                             <td class="num won">${won}</td>
-                            <td class="num">${played}</td>
                         </tr>
                     </tbody>
                 </table>`;

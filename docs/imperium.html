@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Imperium Stats</title>
-    <link rel="stylesheet" href="./styles.css?v=15">
+    <link rel="stylesheet" href="./styles.css?v=16">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -36,8 +36,8 @@
         <h2>Imperium Stats</h2>
         <p style="color:#ccc; font-size:0.9em;">Playing as Romans. Stars are the deck's difficulty.</p>
         <p style="color:#888; font-size:0.82em; margin:0 0 8px;">Won and lost count
-           <em>finished</em> games. A game left set up gets logged more than once, so
-           sittings are counted separately.</p>
+           <em>finished</em> games. A game left set up is logged more than once, so
+           these are fewer than the times you sat down to it.</p>
         <div id="body"><p style="color:#aaa;">Loading...</p></div>
     </div>
 
@@ -45,7 +45,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=15"></script>
+    <script src="./tabs.js?v=16"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -66,15 +66,16 @@
             const rows = data.expansions.map(group => {
                 const civs = group.civilisations.map(c => {
                     totalWon += c.won; totalLost += c.lost;
-                    const played = c.won + c.lost > 0;
+                    // Greyed means never faced, not never finished. A deck you
+                    // sat down to and left mid-game still counts as tried.
+                    const played = (c.plays || c.won + c.lost) > 0;
                     return `<tr class="civ${played ? '' : ' unplayed'}">
                         <td>${esc(c.name)}<span class="stars">${'★'.repeat(c.stars)}</span></td>
                         <td class="num lost">${c.lost || ''}</td>
                         <td class="num won">${c.won || ''}</td>
-                        <td class="num">${c.plays || ''}</td>
                     </tr>`;
                 }).join('');
-                return `<tr class="exp-row"><td colspan="4">${esc(group.expansion)}</td></tr>${civs}`;
+                return `<tr class="exp-row"><td colspan="3">${esc(group.expansion)}</td></tr>${civs}`;
             }).join('');
 
             const unmatched = data.unmatched_levels.length
@@ -84,14 +85,13 @@
 
             body.innerHTML = `
                 <table class="civs">
-                    <thead><tr><th></th><th>Lost</th><th>Won</th><th>Sittings</th></tr></thead>
+                    <thead><tr><th></th><th>Lost</th><th>Won</th></tr></thead>
                     <tbody>
                         ${rows}
                         <tr class="totals">
                             <td>Total — ${data.total_games} finished</td>
                             <td class="num lost">${totalLost}</td>
                             <td class="num won">${totalWon}</td>
-                            <td class="num">${data.total_plays}</td>
                         </tr>
                     </tbody>
                 </table>${unmatched}`;
