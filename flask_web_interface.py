@@ -2273,8 +2273,28 @@ def leading_number(text):
 # parameters ended up, for you and for the bot — the bot is nearly always fully
 # terraformed at 8 C, 14%, 9 oceans, which is what you're racing.
 ARES_MATCH = '%ares expedition%'
-ARES_TARGET = {'temp': 8, 'oxygen': 14, 'oceans': 9}
+# Where each global parameter starts and where it finishes. The chart draws
+# progress against these and the table reports the average, so they live here
+# rather than being written out again in the page.
+ARES_PARAMS = {
+    'temp':   {'from': -30, 'to': 8,  'label': 'Temperature'},
+    'oxygen': {'from': 0,   'to': 14, 'label': 'Oxygen'},
+    'oceans': {'from': 0,   'to': 9,  'label': 'Oceans'},
+}
+ARES_TARGET = {k: v['to'] for k, v in ARES_PARAMS.items()}
 ARES_FIELDS = ('temp', 'oxygen', 'oceans', 'mc')
+
+
+def ares_progress(value, key):
+    """How far one parameter got, as a percentage of its own range.
+
+    Capped at 100: you cannot push a parameter past terraformed, and an
+    uncapped figure would make an ordinary finish look like an overachievement.
+    """
+    if value is None:
+        return None
+    low, high = ARES_PARAMS[key]['from'], ARES_PARAMS[key]['to']
+    return max(0.0, min(100.0, (value - low) / (high - low) * 100))
 
 # Written every which way: "8 C, 13 %, 9 ocean Tiles", "-2 C, 12%, 7 O2, 35 M".
 # The third number is oceans however it was labelled — ocean, tiles, or O2,
@@ -2350,17 +2370,17 @@ def api_ares_stats():
             continue
         me = dict(zip(ARES_FIELDS, r[3:7]))
         bot = dict(zip(ARES_FIELDS, r[7:11]))
-        # How far short of a terraformed board you finished. Only counted when
-        # all three are recorded, or the shortfall would look better than it was.
-        short = None
-        if all(me.get(k) is not None for k in ('temp', 'oxygen', 'oceans')):
-            short = sum(max(0, ARES_TARGET[k] - me[k]) if k != 'temp'
-                        else max(0, ARES_TARGET[k] - me[k])
-                        for k in ('temp', 'oxygen', 'oceans'))
+        # How much of the terraforming got done, averaged over the three
+        # parameters. Only when all three are recorded — averaging the two you
+        # happen to have would flatter a game that never reported the third.
+        progress = None
+        if all(me.get(k) is not None for k in ARES_PARAMS):
+            progress = round(sum(ares_progress(me[k], k) for k in ARES_PARAMS)
+                             / len(ARES_PARAMS))
         games.append({
             'date': r[0].isoformat(), 'won': 'won' in result,
             'difficulty': r[2], 'me': me, 'bot': bot,
-            'shortfall': short, 'notes': r[11] or '',
+            'progress': progress, 'notes': r[11] or '',
         })
 
     def best(key):
@@ -2368,7 +2388,7 @@ def api_ares_stats():
         return max(values) if values else None
 
     return jsonify({
-        'games': games, 'target': ARES_TARGET,
+        'games': games, 'target': ARES_TARGET, 'params': ARES_PARAMS,
         'total_plays': sittings, 'total_games': len(games),
         'won': sum(1 for g in games if g['won']),
         'lost': sum(1 for g in games if not g['won']),

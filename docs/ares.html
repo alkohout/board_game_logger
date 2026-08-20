@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ares Expedition</title>
-    <link rel="stylesheet" href="./styles.css?v=25">
+    <link rel="stylesheet" href="./styles.css?v=26">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -64,7 +64,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=25"></script>
+    <script src="./tabs.js?v=26"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -82,11 +82,11 @@
         // three run on different scales — temperature -30 to +8, oxygen 0 to
         // 14, oceans 0 to 9 — and raw values on one axis would let temperature
         // swamp the other two. 100% means that parameter was finished.
-        const PARAMS = [
-            { key: 'temp',   label: 'Temperature', from: -30, to: 8,  colour: '#FF8A65' },
-            { key: 'oxygen', label: 'Oxygen',      from: 0,   to: 14, colour: '#90CAF9' },
-            { key: 'oceans', label: 'Oceans',      from: 0,   to: 9,  colour: '#4DD0E1' },
-        ];
+        // Colours are the page's business; the ranges belong to the server,
+        // which also computes the average shown in the table — so the two can't
+        // disagree about what 100% means.
+        const COLOURS = { temp: '#FF8A65', oxygen: '#90CAF9', oceans: '#4DD0E1' };
+        let PARAMS = [];
 
         const pct = (p, value) =>
             Math.max(0, Math.min(100, ((value - p.from) / (p.to - p.from)) * 100));
@@ -163,6 +163,8 @@
 
             // How close each finish got, oldest first. Only games where all
             // three parameters were recorded have a shortfall to plot.
+            PARAMS = Object.entries(data.params).map(([key, p]) =>
+                ({ key, label: p.label, from: p.from, to: p.to, colour: COLOURS[key] }));
             const plotted = data.games.filter(g =>
                 PARAMS.some(p => g.me[p.key] !== null && g.me[p.key] !== undefined)).reverse();
             const chart = plotted.length >= 2 ? drawChart(plotted) : '';
@@ -173,20 +175,21 @@
                 <td class="note">${esc(g.difficulty || '')}</td>
                 ${num(g.me.temp, t.temp)}${num(g.me.oxygen, t.oxygen)}${num(g.me.oceans, t.oceans)}
                 <td class="num">${g.me.mc ?? ''}</td>
-                <td class="num sep">${g.shortfall ?? ''}</td>
+                <td class="num sep ${g.progress === 100 ? 'hit' : ''}">${
+                    g.progress === null ? '' : g.progress + '%'}</td>
             </tr>`).join('');
 
             // Closest finish is the most useful single number here: it says how
             // near the board got, which win/loss alone doesn't.
-            const withGap = data.games.filter(g => g.shortfall !== null);
-            const closest = withGap.length
-                ? Math.min(...withGap.map(g => g.shortfall)) : null;
+            const scored = data.games.filter(g => g.progress !== null);
+            const closest = scored.length
+                ? Math.max(...scored.map(g => g.progress)) : null;
 
             const headline = `<p class="headline">
                 ${data.won} won, ${data.lost} lost of ${data.total_games} finished games.
                 Best reached: ${data.best.temp ?? '–'}°C, ${data.best.oxygen ?? '–'}% oxygen,
                 ${data.best.oceans ?? '–'} oceans.
-                ${closest !== null ? `Closest finish was ${closest} step${closest === 1 ? '' : 's'} short.` : ''}</p>`;
+                ${closest !== null ? `Closest finish got <strong>${closest}%</strong> of the way.` : ''}</p>`;
 
             // A finished game with only some parameters recorded can't be
             // placed on the chart; say so rather than letting the line look
@@ -208,7 +211,7 @@
                     <thead>
                         <tr><th class="left">Date</th><th></th><th>Diff</th>
                             <th>°C</th><th>O₂</th><th>Oc</th><th>MC</th>
-                            <th class="sep">Short by</th></tr>
+                            <th class="sep">Achieved</th></tr>
                     </thead>
                     <tbody>${rows}</tbody>
                  </table></div>` + headline + gap;
