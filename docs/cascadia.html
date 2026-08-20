@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cascadia</title>
+    <link rel="stylesheet" href="./styles.css?v=21">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        table.ladder { border-collapse: collapse; width: 100%; }
+        table.ladder th, table.ladder td { padding: 8px 8px; }
+        table.ladder thead th {
+            font-size: 0.78em; color: #aaa; font-weight: normal; text-align: right;
+        }
+        table.ladder thead th:first-child { text-align: left; }
+        table.ladder tbody tr { border-bottom: 1px solid rgba(255,255,255,0.07); }
+        .rung { font-weight: bold; white-space: nowrap; }
+        .num { text-align: right; font-variant-numeric: tabular-nums; width: 64px; }
+        .won  { color: #90EE90; }
+        .lost { color: #FF8A80; }
+        .beaten .rung { color: #90EE90; }
+        .beaten .rung::after { content: ' ✓'; }
+        .stuck .rung { color: #FF8A80; }
+        .untried td { color: #666; }
+        .next td { background: rgba(255,213,79,0.09); }
+        .next .rung { color: #FFD54F; }
+        .next .rung::after { content: ' ← next'; font-weight: normal; font-size: 0.8em; }
+        .caption { color: #ccc; font-size: 0.9em; margin: 0 0 4px; }
+        .aside { color: #888; font-size: 0.82em; margin: 10px 0 0; }
+        .headline { margin: 14px 0 0; padding: 9px 11px; border-left: 3px solid #FFD54F;
+                    background: rgba(255,213,79,0.07); font-size: 0.95em; }
+    </style>
+</head>
+<body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
+    <div class="form-container">
+        <h2>Cascadia</h2>
+        <p class="caption">The solo scenario ladder, and how far up it you are.</p>
+        <p class="aside" style="margin:0 0 8px;">Won and lost count <em>finished</em>
+           games. A game left set up is logged more than once, so these are fewer
+           than the times you sat down to it.</p>
+        <div id="body"><p style="color:#aaa;">Loading...</p></div>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script src="./tabs.js?v=21"></script>
+    <script>
+        requireAuth();
+        renderTabs('games');
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        async function load() {
+            const data = await apiGet('/api/cascadia_stats');
+            const body = document.getElementById('body');
+            if (!data) return;
+            if (data.success === false) {
+                body.innerHTML = `<p class="status-err">${esc(data.message || 'Not allowed.')}</p>`;
+                return;
+            }
+
+            const rows = data.scenarios.map(s => {
+                // A rung is beaten, stuck, merely attempted, or untouched —
+                // and exactly one of those is the one to play next.
+                let cls = !s.plays ? 'untried' : s.won ? 'beaten' : s.stuck ? 'stuck' : '';
+                if (s.scenario === data.next_up) cls += ' next';
+                return `<tr class="${cls}">
+                    <td class="rung">Scenario ${s.scenario}</td>
+                    <td class="num lost">${s.lost || ''}</td>
+                    <td class="num won">${s.won || ''}</td>
+                    <td class="num">${s.best_score ?? ''}</td>
+                </tr>`;
+            }).join('');
+
+            const headline = data.furthest_beaten
+                ? `<p class="headline">Beaten up to <strong>Scenario ${data.furthest_beaten}</strong>.
+                     Next up: <strong>Scenario ${data.next_up}</strong>.</p>`
+                : `<p class="headline">Nothing beaten yet — start at
+                     <strong>Scenario 1</strong>.</p>`;
+
+            const gap = data.unrecorded_plays
+                ? `<p class="aside">${data.total_games} finished games from
+                     ${data.total_plays} sittings; ${data.unrecorded_plays} don't record a
+                     scenario, so they appear in no row above.</p>`
+                : '';
+
+            body.innerHTML =
+                `<table class="ladder">
+                    <thead><tr><th></th><th>Lost</th><th>Won</th><th>Best score</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                 </table>` + headline + gap;
+        }
+        load();
+    </script>
+</body>
+</html>

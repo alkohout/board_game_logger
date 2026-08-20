@@ -205,7 +205,8 @@ EXPECTED_COLUMNS = {
     # add_game writes the Spirit Island columns on every insert, so code
     # deployed ahead of migration 012 would fail to log any game at all.
     'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario',
-              'civilisation', 'my_civilisation', 'zoo_map', 'start_appeal'),
+              'civilisation', 'my_civilisation', 'zoo_map', 'start_appeal',
+              'difficulty', 'scenario_number'),
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
@@ -1441,6 +1442,8 @@ GAME_TRACKERS = [
      'blurb': 'Locations, totems and endings', 'match': '%sleeping gods%'},
     {'key': 'ark_nova', 'label': 'Ark Nova', 'page': 'ark_nova.html',
      'blurb': 'Maps and starting appeal', 'match': '%ark nova%'},
+    {'key': 'cascadia', 'label': 'Cascadia', 'page': 'cascadia.html',
+     'blurb': 'The solo scenario ladder', 'match': '%cascadia%'},
 ]
 
 
@@ -1787,12 +1790,14 @@ def api_add_game():
         cur.execute(
             "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score,"
             " spirit, adversary, adversary_level, scenario, civilisation,"
-            " my_civilisation, zoo_map, start_appeal)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " my_civilisation, zoo_map, start_appeal, difficulty,"
+            " scenario_number)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
              spirit, adversary, level, scenario, imperium_civilisation(data),
-             imperium_my_civilisation(data), *ark_nova_fields(data))
+             imperium_my_civilisation(data), *ark_nova_fields(data),
+             difficulty_value(data), scenario_number_value(data))
         )
         conn.commit()
         cur.close()
@@ -2160,6 +2165,105 @@ def sleeping_gods_category(name):
 
 
 
+# Difficulty is deliberately open. Games disagree on the words — Century says
+# Standard where Earth says Normal — and a closed list would reject whichever
+# game came next. The form suggests what has been used before instead.
+def difficulty_value(data):
+    value = (data.get('difficulty') or '').strip()
+    return value[:40] or None
+
+
+def scenario_number_value(data):
+    value = data.get('scenario_number')
+    try:
+        value = int(value) if str(value or '').strip() else None
+    except (TypeError, ValueError):
+        return None
+    return value if value is not None and 1 <= value <= 999 else None
+
+
+@app.route('/api/difficulty_options')
+def api_difficulty_options():
+    """Difficulties this account has used, commonest first.
+
+    Read back from the plays rather than kept in a list, so it learns the
+    words you actually use without anyone maintaining it.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT difficulty, count(*) FROM games
+                   WHERE difficulty IS NOT NULL
+                   GROUP BY 1 ORDER BY 2 DESC, 1""")
+    used = [r[0] for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    # A few common ones so the very first game still gets suggestions.
+    for fallback in ('Easy', 'Normal', 'Standard', 'Hard', 'Expert'):
+        if fallback not in used:
+            used.append(fallback)
+    return jsonify({'difficulties': used})
+
+
+CASCADIA_MATCH = '%cascadia%'
+
+
+@app.route('/api/cascadia_stats')
+def api_cascadia_stats():
+    """The scenario ladder: how each rung went, and which is next.
+
+    Won and lost count finished games. A sitting with no result is a game left
+    set up, not a loss.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT scenario_number, result, my_score, date_played
+                   FROM games WHERE game_title ILIKE %s""", (CASCADIA_MATCH,))
+    plays = [{'scenario': r[0], 'result': r[1], 'my_score': r[2], 'date': r[3]}
+             for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+
+    highest = max([p['scenario'] for p in plays if p['scenario']] or [0])
+    # Always show a rung beyond the furthest reached, so there is something to
+    # aim at rather than a list that stops exactly where you are.
+    rungs = range(1, max(highest + 1, 8) + 1)
+
+    scenarios = []
+    for n in rungs:
+        mine = [p for p in plays if p['scenario'] == n]
+        tally = _tally(mine)
+        scores = [s for s in (leading_number(p['my_score']) for p in mine)
+                  if s is not None]
+        scenarios.append({
+            'scenario': n, **tally,
+            'best_score': max(scores) if scores else None,
+            'stuck': tally['lost'] >= STUCK_AFTER_LOSSES and tally['won'] == 0,
+        })
+
+    beaten = [s['scenario'] for s in scenarios if s['won']]
+    return jsonify({
+        'scenarios': scenarios,
+        'furthest_beaten': max(beaten) if beaten else None,
+        'next_up': (max(beaten) + 1) if beaten else 1,
+        'stuck_after_losses': STUCK_AFTER_LOSSES,
+        'total_plays': len(plays),
+        'total_games': sum(1 for p in plays
+                           if 'won' in (p['result'] or '').lower()
+                           or 'lost' in (p['result'] or '').lower()),
+        'unrecorded_plays': sum(1 for p in plays if not p['scenario']),
+    })
+
+
+def leading_number(text):
+    """The score at the front of a free-text score field.
+
+    Scores were written as "95, 6 pine cones" or "94, 27 hawks" — the first
+    number is the score, the rest is what made it up.
+    """
+    found = re.match(r'\s*(-?\d{1,4})', str(text or ''))
+    return int(found.group(1)) if found else None
+
+
 # Ark Nova. The base game has ten map variants — 0 and A, plus 1-8. Map Pack 1
 # adds 9 and 10, Map Pack 2 adds 11-14; both are left out until they're owned,
 # rather than offering maps that aren't on the shelf.
@@ -2341,7 +2445,7 @@ def spirit_island_fields(data):
 PLAY_COLUMNS = ('id', 'date_played', 'game_title', 'result', 'level', 'my_score',
                 'bot_score', 'notes', 'spirit', 'adversary', 'adversary_level',
                 'scenario', 'civilisation', 'my_civilisation', 'zoo_map',
-                'start_appeal')
+                'start_appeal', 'difficulty', 'scenario_number')
 
 
 def play_row(row):
@@ -2461,13 +2565,15 @@ def api_update_play():
                              spirit = %s, adversary = %s, adversary_level = %s,
                              scenario = %s, civilisation = %s,
                              my_civilisation = %s, zoo_map = %s,
-                             start_appeal = %s
+                             start_appeal = %s, difficulty = %s,
+                             scenario_number = %s
             WHERE id = %s
         """, (data.get('date_played'), data.get('result', ''), data.get('level', ''),
               data.get('my_score', ''), data.get('bot_score', ''), data.get('notes', ''),
               spirit, adversary, level, scenario,
               imperium_civilisation(data), imperium_my_civilisation(data),
-              *ark_nova_fields(data), play_id))
+              *ark_nova_fields(data), difficulty_value(data),
+              scenario_number_value(data), play_id))
         if cur.rowcount != 1:
             conn.rollback()
             cur.close(); conn.close()

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=20">
+    <link rel="stylesheet" href="./styles.css?v=21">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -155,6 +155,16 @@
         <label>Start appeal:</label>
         <input type="number" id="start_appeal" min="0" max="100" step="1"
                placeholder="e.g. 15" inputmode="numeric">
+    </div>
+    <label>Difficulty:</label>
+    <input type="text" id="difficulty" list="difficulty-list" autocomplete="off"
+           placeholder="Easy, Normal, Expert…">
+    <datalist id="difficulty-list"></datalist>
+    <!-- Games climbed a rung at a time. Shown for those, not for everything. -->
+    <div id="lad-fields" style="display:none;">
+        <label>Scenario number:</label>
+        <input type="number" id="scenario_number" min="1" max="999" step="1"
+               placeholder="e.g. 9" inputmode="numeric">
     </div>
     <label>Level:</label>
     <textarea id="level" rows="2" placeholder="Add level here..."></textarea>
@@ -341,7 +351,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=20"></script>
+<script src="./tabs.js?v=21"></script>
 <script>
 requireAuth();
 
@@ -534,6 +544,7 @@ loadRecentPlays();
 
 // Autocompletes
 setupAutocomplete('game_title', 'add_suggestions');
+fillDifficulty();
 // Picking a title from the dropdown looks the game up straight away.
 setupAutocomplete('search_title', 'search_suggestions', () => lookUpGame());
 setupAutocomplete('selector_game_title', 'selector_suggestions');
@@ -543,6 +554,8 @@ setupAutocomplete('selector_game_title', 'selector_suggestions');
 const SI_FIELDS = ['spirit', 'adversary', 'adversary_level', 'scenario'];
 const IMP_FIELDS = ['civilisation', 'my_civilisation'];
 const AN_FIELDS = ['zoo_map', 'start_appeal'];
+const LADDER_FIELDS = ['scenario_number'];
+let diffLoaded = false;
 let siLoaded = false;
 let impLoaded = false;
 let IMP_DEFAULT_SIDE = 'Romans';
@@ -558,6 +571,24 @@ function isImperium(title) {
 
 function isArkNova(title) {
     return /ark\s*nova/i.test(title);
+}
+
+// Games logged as a numbered ladder. Cascadia today; For Northwood! and
+// anything else can join by name without touching the rest.
+function isLadderGame(title) {
+    return /cascadia|northwood/i.test(title);
+}
+
+// Difficulty suggestions come from what this account has already used, so the
+// list teaches itself rather than being maintained by hand.
+async function fillDifficulty() {
+    if (diffLoaded) return;
+    const opts = await apiGet('/api/difficulty_options');
+    if (!opts) return;
+    diffLoaded = true;
+    document.getElementById('difficulty-list').innerHTML =
+        (opts.difficulties || []).map(d =>
+            `<option value="${escapeHtml(d)}">`).join('');
 }
 
 async function fillArkNova() {
@@ -621,6 +652,8 @@ function toggleSpiritIsland() {
     const an = isArkNova(title);
     document.getElementById('an-fields').style.display = an ? '' : 'none';
     if (an) fillArkNova();
+    const lad = isLadderGame(title);
+    document.getElementById('lad-fields').style.display = lad ? '' : 'none';
 }
 document.getElementById('game_title').addEventListener('input', toggleSpiritIsland);
 // Picking from the dropdown sets .value in code, which fires no input event —
@@ -654,6 +687,10 @@ document.getElementById('log-btn').addEventListener('click', async () => {
     if (isArkNova(title)) {
         AN_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
     }
+    if (isLadderGame(title)) {
+        LADDER_FIELDS.forEach(id => payload[id] = document.getElementById(id).value);
+    }
+    payload.difficulty = document.getElementById('difficulty').value;
     const data = await apiPost('/api/add_game', payload);
     btn.disabled = false;
     if (data?.success) {
@@ -661,7 +698,9 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         status.className = 'status-ok';
         status.style.display = '';
         ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
-        SI_FIELDS.concat(IMP_FIELDS, AN_FIELDS).forEach(id => document.getElementById(id).value = '');
+        SI_FIELDS.concat(IMP_FIELDS, AN_FIELDS, LADDER_FIELDS, ['difficulty'])
+            .forEach(id => document.getElementById(id).value = '');
+        diffLoaded = false;   // a new difficulty should show up in the list
         // Blanking a select with no empty option leaves it showing nothing;
         // the side you play should go back to the usual one.
         const side = document.getElementById('my_civilisation');
@@ -669,6 +708,7 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         document.getElementById('si-fields').style.display = 'none';
         document.getElementById('imp-fields').style.display = 'none';
         document.getElementById('an-fields').style.display = 'none';
+        document.getElementById('lad-fields').style.display = 'none';
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
@@ -711,7 +751,9 @@ function giSpiritIsland(p) {
     return [['Spirit', p.spirit], ['Adversary', adv], ['Scenario', p.scenario],
             ['Playing as', p.my_civilisation], ['Civilisation', p.civilisation],
             ['Map', p.zoo_map ? 'Map ' + p.zoo_map : ''],
-            ['Start appeal', p.start_appeal]];
+            ['Start appeal', p.start_appeal],
+            ['Difficulty', p.difficulty],
+            ['Scenario', p.scenario_number]];
 }
 
 function renderProgress(p) {
@@ -810,10 +852,20 @@ async function renderEdit(p, title) {
                       value="${p.start_appeal ?? ''}"></div>`;
     }
 
+    await fillDifficulty();
+    let extra = `<div class="gi-field"><label>Difficulty</label>
+        <input type="text" id="gi-difficulty" list="difficulty-list"
+               value="${escapeHtml(p.difficulty || '')}"></div>`;
+    if (isLadderGame(title)) {
+        extra += `<div class="gi-field"><label>Scenario number</label>
+            <input type="number" id="gi-scenario_number" min="1" max="999"
+                   value="${p.scenario_number ?? ''}"></div>`;
+    }
+
     document.getElementById('gi-edit').innerHTML =
         `<div class="gi-field"><label for="gi-date_played">Date played</label>
          <input type="date" id="gi-date_played" value="${escapeHtml(p.date_played || '')}"></div>` +
-        field('result', 'Result', p.result) + si + imp + an +
+        field('result', 'Result', p.result) + extra + si + imp + an +
         field('level', 'Level', p.level, 2) +
         field('my_score', 'My score', p.my_score) +
         field('bot_score', 'Bot score', p.bot_score) +
@@ -866,6 +918,7 @@ document.getElementById('gi-save').addEventListener('click', async () => {
         civilisation: val('civilisation'),
         my_civilisation: val('my_civilisation'),
         zoo_map: val('zoo_map'), start_appeal: val('start_appeal'),
+        difficulty: val('difficulty'), scenario_number: val('scenario_number'),
     });
     btn.disabled = false;
     status.style.display = '';
