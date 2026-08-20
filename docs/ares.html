@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ares Expedition</title>
-    <link rel="stylesheet" href="./styles.css?v=27">
+    <link rel="stylesheet" href="./styles.css?v=28">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -54,6 +54,8 @@
         .winmark-key { color: #90EE90; }
         .faint-key { opacity: 0.6; }
         .chart-note { color: #888; font-size: 0.78em; margin: 2px 0 12px; }
+        .chart-head { margin: 14px 0 2px; font-size: 0.9em; color: #fff; }
+        .chart-count { color: #888; font-size: 0.8em; font-weight: normal; margin-left: 6px; }
         .chart-note span { margin-right: 12px; white-space: nowrap; }
     </style>
 </head>
@@ -75,7 +77,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=27"></script>
+    <script src="./tabs.js?v=28"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -196,7 +198,34 @@
                 ({ key, label: p.label, from: p.from, to: p.to, colour: COLOURS[key] }));
             const plotted = data.games.filter(g =>
                 PARAMS.some(p => g.me[p.key] !== null && g.me[p.key] !== undefined)).reverse();
-            const chart = plotted.length >= 2 ? drawChart(plotted) : '';
+
+            // Split by difficulty: a run at Expert and a run at Advanced are
+            // different climbs, and one line through both would compare things
+            // that aren't comparable.
+            const groups = new Map();
+            plotted.forEach(g => {
+                const key = g.difficulty || 'Difficulty not recorded';
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(g);
+            });
+            const ordered = [...groups.entries()].sort((a, b) => {
+                // Unlabelled games last; otherwise most-played first.
+                const un = k => k.startsWith('Difficulty not') ? 1 : 0;
+                return un(a[0]) - un(b[0]) || b[1].length - a[1].length;
+            });
+
+            // A single game is a dot, not a trend, so it's named rather than
+            // drawn — otherwise the page fills with one-point charts.
+            const single = ordered.filter(([, g]) => g.length < 2);
+            const chart = ordered.filter(([, g]) => g.length >= 2)
+                .map(([name, g]) => `<h3 class="chart-head">${esc(name)}
+                    <span class="chart-count">${g.length} games</span></h3>` + drawChart(g))
+                .join('') +
+                (single.length
+                    ? `<p class="chart-note">${single.map(([name, g]) =>
+                        `${esc(name)}: one game only (${g[0].progress ?? '–'}%), not charted`)
+                        .join(' · ')}</p>`
+                    : '');
 
             const rows = data.games.map(g => `<tr>
                 <td class="date">${esc(g.date)}</td>
