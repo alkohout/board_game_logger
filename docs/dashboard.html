@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=14">
+    <link rel="stylesheet" href="./styles.css?v=15">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -121,6 +121,8 @@
          opponent's. One field, for the same reason Spirit Island has four —
          it's what the stats page counts. -->
     <div id="imp-fields" style="display:none;">
+        <label>Playing as:</label>
+        <select id="my_civilisation"></select>
         <label>Opponent civilisation:</label>
         <select id="civilisation"><option value="">—</option></select>
     </div>
@@ -301,7 +303,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=14"></script>
+<script src="./tabs.js?v=15"></script>
 <script>
 requireAuth();
 
@@ -497,9 +499,10 @@ setupAutocomplete('selector_game_title', 'selector_suggestions');
 // Spirit Island fields. Fetched once, the first time a Spirit Island title is
 // typed, so every other game pays nothing for them.
 const SI_FIELDS = ['spirit', 'adversary', 'adversary_level', 'scenario'];
-const IMP_FIELDS = ['civilisation'];
+const IMP_FIELDS = ['civilisation', 'my_civilisation'];
 let siLoaded = false;
 let impLoaded = false;
+let IMP_DEFAULT_SIDE = 'Romans';
 
 function isSpiritIsland(title) {
     return /spirit\s*island/i.test(title);
@@ -523,6 +526,14 @@ async function fillImperium() {
             `<optgroup label="${escapeHtml(exp)}">` + list.map(c =>
                 `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} ${'★'.repeat(c.stars)}</option>`
             ).join('') + '</optgroup>').join('');
+
+    // Your own side. Romans is preselected because it always has been; the
+    // rest are there for the day it isn't.
+    IMP_DEFAULT_SIDE = opts.default_side || 'Romans';
+    document.getElementById('my_civilisation').innerHTML =
+        (opts.playable || []).map(n =>
+            `<option value="${escapeHtml(n)}"${n === IMP_DEFAULT_SIDE ? ' selected' : ''}>${escapeHtml(n)}</option>`
+        ).join('');
 }
 
 async function fillSpiritIsland() {
@@ -587,6 +598,10 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         status.style.display = '';
         ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
         SI_FIELDS.concat(IMP_FIELDS).forEach(id => document.getElementById(id).value = '');
+        // Blanking a select with no empty option leaves it showing nothing;
+        // the side you play should go back to the usual one.
+        const side = document.getElementById('my_civilisation');
+        if (side) side.value = IMP_DEFAULT_SIDE;
         document.getElementById('si-fields').style.display = 'none';
         document.getElementById('imp-fields').style.display = 'none';
         loadStats();
@@ -629,7 +644,7 @@ function giSpiritIsland(p) {
     const adv = p.adversary
         ? p.adversary + (p.adversary_level ? ` (level ${p.adversary_level})` : '') : '';
     return [['Spirit', p.spirit], ['Adversary', adv], ['Scenario', p.scenario],
-            ['Civilisation', p.civilisation]];
+            ['Playing as', p.my_civilisation], ['Civilisation', p.civilisation]];
 }
 
 function renderProgress(p) {
@@ -653,9 +668,11 @@ function renderStats(s) {
     document.getElementById('gi-stats').innerHTML = giPairs([
         ['Won', decided ? `${s.won}${rate}` : s.won || 0, 'gi-won'],
         ['Lost', s.lost || 0, 'gi-lost'],
-        // Most plays record no result, so say so rather than implying losses.
-        ['No result', s.total_plays - decided],
-        ['Total plays', s.total_plays],
+        ['Finished games', decided],
+        // A game left set up is logged more than once, so the rest are
+        // sittings that never ended — not losses.
+        ['Unfinished', s.total_plays - decided],
+        ['Sittings logged', s.total_plays],
         ['This week', s.this_week], ['This month', s.this_month],
         ['This year', s.this_year],
         ['First played', giDate(s.first_played)],
@@ -697,7 +714,14 @@ async function renderEdit(p, title) {
     if (isImperium(title)) {
         await fillImperium();
         const src = [...document.getElementById('civilisation').options];
-        imp = `<div class="gi-field"><label>Opponent civilisation</label>
+        const sides = [...document.getElementById('my_civilisation').options];
+        imp = `<div class="gi-field"><label>Playing as</label>
+                <select id="gi-my_civilisation">` +
+              sides.map(o => `<option value="${escapeHtml(o.value)}"${
+                  o.value === (p.my_civilisation || IMP_DEFAULT_SIDE) ? ' selected' : ''
+              }>${escapeHtml(o.textContent)}</option>`).join('') +
+              `</select></div>
+               <div class="gi-field"><label>Opponent civilisation</label>
                 <select id="gi-civilisation">` +
               src.map(o => `<option value="${escapeHtml(o.value)}"${
                   o.value === (p.civilisation || '') ? ' selected' : ''
@@ -759,6 +783,7 @@ document.getElementById('gi-save').addEventListener('click', async () => {
         spirit: val('spirit'), adversary: val('adversary'),
         adversary_level: val('adversary_level'), scenario: val('scenario'),
         civilisation: val('civilisation'),
+        my_civilisation: val('my_civilisation'),
     });
     btn.disabled = false;
     status.style.display = '';

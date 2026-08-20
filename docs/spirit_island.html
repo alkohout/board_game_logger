@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Spirit Island Stats</title>
-    <link rel="stylesheet" href="./styles.css?v=14">
+    <link rel="stylesheet" href="./styles.css?v=15">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -74,6 +74,9 @@
         <h2>Spirit Island</h2>
         <p class="caption">Base game, Branch &amp; Claw, Jagged Earth and Nature Incarnate.
            Greyed out means never played.</p>
+        <p class="aside" style="margin:0 0 8px;">Won and lost count <em>finished</em>
+           games. A game left set up gets logged more than once, so sittings are
+           counted separately and will always be the larger number.</p>
         <div id="body"><p style="color:#aaa;">Loading...</p></div>
     </div>
 
@@ -81,7 +84,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=14"></script>
+    <script src="./tabs.js?v=15"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -132,7 +135,7 @@
 
             return `<h3 style="margin:22px 0 0;">${esc(title)}</h3>
                 <table class="si">
-                    <thead><tr><th></th><th>Lost</th><th>Won</th><th>Plays</th></tr></thead>
+                    <thead><tr><th></th><th>Lost</th><th>Won</th><th>Sittings</th></tr></thead>
                     <tbody>
                         ${body}
                         <tr class="totals">
@@ -151,7 +154,7 @@
         function gridCell(cell) {
             if (!cell.plays) return '<td class="cell cell-none">·</td>';
             const cls = cell.stuck ? 'cell-stuck' : cell.won ? 'cell-won' : 'cell-open';
-            return `<td class="cell ${cls}" title="${cell.won} won, ${cell.lost} lost, ${cell.plays} played">
+            return `<td class="cell ${cls}" title="${cell.won} won, ${cell.lost} lost, over ${cell.plays} sitting${cell.plays === 1 ? '' : 's'}">
                         ${cell.won}–${cell.lost}</td>`;
         }
 
@@ -198,7 +201,7 @@
                     <p class="caption">${esc(blurb)}</p>` +
                 entries.map(e => `<div class="spirit-block">
                         <h4>${esc(e.name)} <span class="spirit-count">${e.won}W ${e.lost}L
-                            over ${e.plays} ${e.plays === 1 ? 'play' : 'plays'}</span></h4>
+                            over ${e.plays} ${e.plays === 1 ? 'sitting' : 'sittings'}</span></h4>
                         ${gridTable(e.groups, levels)}</div>`).join('');
         }
 
@@ -214,9 +217,9 @@
             // Say why the totals fall short of the play count, rather than
             // letting the page look like it has lost some games.
             const gap = data.unrecorded_plays
-                ? `<p class="aside">${data.total_plays} Spirit Island plays logged;
+                ? `<p class="aside">${data.total_plays} Spirit Island sittings logged;
                      ${data.unrecorded_plays} of them don't record a spirit, adversary or
-                     scenario, so they appear in no table above. Newly logged plays will.</p>`
+                     scenario, so they appear in no table above. Newly logged ones will.</p>`
                 : '';
 
             // Adversaries first — that's where the decision "keep trying this

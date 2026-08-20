@@ -205,7 +205,7 @@ EXPECTED_COLUMNS = {
     # add_game writes the Spirit Island columns on every insert, so code
     # deployed ahead of migration 012 would fail to log any game at all.
     'games': ('user_id', 'spirit', 'adversary', 'adversary_level', 'scenario',
-              'civilisation'),
+              'civilisation', 'my_civilisation'),
     'rulebooks': ('user_id', 'rules_text', 'page_count'),
     'ai_usage': ('input_tokens', 'cache_read_tokens'),
     'credit_purchases': ('stripe_session_id',),
@@ -1783,11 +1783,12 @@ def api_add_game():
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO games (date_played, game_title, notes, result, level, my_score, bot_score,"
-            " spirit, adversary, adversary_level, scenario, civilisation)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " spirit, adversary, adversary_level, scenario, civilisation,"
+            " my_civilisation) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
-             spirit, adversary, level, scenario, imperium_civilisation(data))
+             spirit, adversary, level, scenario, imperium_civilisation(data),
+             imperium_my_civilisation(data))
         )
         conn.commit()
         cur.close()
@@ -1956,12 +1957,24 @@ ADVERSARY_LEVEL_RE = re.compile(r'(?:level|lvl|l)\s*([1-6])\b', re.I)
 
 
 def _tally(rows):
+    """Sessions and finished games are different things.
+
+    A game gets left set up and logged more than once — "Bots turn", "My
+    turn" — so a row is a sitting, not a game. A result is only written when
+    the game actually ends, which makes won+lost the count of finished games
+    and everything else a game still in progress or never finished.
+    """
+    won = sum(1 for p in rows if 'won' in (p['result'] or '').lower())
+    lost = sum(1 for p in rows if 'lost' in (p['result'] or '').lower())
     return {
-        'won': sum(1 for p in rows if 'won' in (p['result'] or '').lower()),
-        'lost': sum(1 for p in rows if 'lost' in (p['result'] or '').lower()),
-        # plays counts every logged game, including the many with no result
-        # recorded — otherwise a spirit played six times looks unplayed.
+        'won': won,
+        'lost': lost,
+        # Finished games: the only rows where the outcome is known.
+        'games': won + lost,
+        # Every sitting, including mid-game notes. Kept because it is what
+        # tells you whether something has ever been touched.
         'plays': len(rows),
+        'unfinished': len(rows) - won - lost,
     }
 
 
@@ -2143,21 +2156,45 @@ def sleeping_gods_category(name):
 
 
 
+# Romans is the deck you play, and never one you face — which is what keeps
+# "Romans (me)" out of the opponent tally. It is still a playable side, so it
+# leads the list of what you can pick for yourself.
+IMPERIUM_DEFAULT_SIDE = 'Romans'
+
+
+def imperium_playable():
+    """Sides you can take. Romans first, being the usual one."""
+    return [IMPERIUM_DEFAULT_SIDE] + [n for _, n, _ in IMPERIUM_CIVS]
+
+
+def _match_civ(value, allowed):
+    value = (value or '').strip()
+    return next((n for n in allowed if n.lower() == value.lower()), None)
+
+
 def imperium_civilisation(data):
     """The deck faced, validated against the official list.
 
     Same rule as the Spirit Island pickers: only a name we know is stored, so
     the stats page can count on it rather than parsing prose.
     """
-    value = (data.get('civilisation') or '').strip()
-    return next((n for _, n, _ in IMPERIUM_CIVS if n.lower() == value.lower()), None)
+    return _match_civ(data.get('civilisation'), [n for _, n, _ in IMPERIUM_CIVS])
+
+
+def imperium_my_civilisation(data):
+    """The side you played. Romans unless you say otherwise."""
+    return _match_civ(data.get('my_civilisation'), imperium_playable())
 
 
 @app.route('/api/imperium_options')
 def api_imperium_options():
-    """The civilisation picker on the log form."""
-    return jsonify({'civilisations': [
-        {'name': n, 'expansion': e, 'stars': st} for e, n, st in IMPERIUM_CIVS]})
+    """The civilisation pickers on the log form."""
+    return jsonify({
+        'civilisations': [{'name': n, 'expansion': e, 'stars': st}
+                          for e, n, st in IMPERIUM_CIVS],
+        'playable': imperium_playable(),
+        'default_side': IMPERIUM_DEFAULT_SIDE,
+    })
 
 
 def spirit_island_fields(data):
@@ -2188,7 +2225,7 @@ def spirit_island_fields(data):
 
 PLAY_COLUMNS = ('id', 'date_played', 'game_title', 'result', 'level', 'my_score',
                 'bot_score', 'notes', 'spirit', 'adversary', 'adversary_level',
-                'scenario', 'civilisation')
+                'scenario', 'civilisation', 'my_civilisation')
 
 
 def play_row(row):
@@ -2306,12 +2343,14 @@ def api_update_play():
             UPDATE games SET date_played = %s, result = %s, level = %s,
                              my_score = %s, bot_score = %s, notes = %s,
                              spirit = %s, adversary = %s, adversary_level = %s,
-                             scenario = %s, civilisation = %s
+                             scenario = %s, civilisation = %s,
+                             my_civilisation = %s
             WHERE id = %s
         """, (data.get('date_played'), data.get('result', ''), data.get('level', ''),
               data.get('my_score', ''), data.get('bot_score', ''), data.get('notes', ''),
               spirit, adversary, level, scenario,
-              imperium_civilisation(data), play_id))
+              imperium_civilisation(data), imperium_my_civilisation(data),
+              play_id))
         if cur.rowcount != 1:
             conn.rollback()
             cur.close(); conn.close()
@@ -2441,8 +2480,9 @@ def api_imperium_stats():
             'name': name, 'stars': stars,
             'won': sum(1 for p in mine if 'won' in p['res']),
             'lost': sum(1 for p in mine if 'lost' in p['res']),
-            # Plays counts every game against this deck, recorded result or
-            # not — the same reason the Spirit Island page shows it.
+            # A game left set up is logged more than once, so a row is a
+            # sitting. Finished games are the ones carrying a result.
+            'games': sum(1 for p in mine if 'won' in p['res'] or 'lost' in p['res']),
             'plays': len(mine),
             # How many still rely on the free text. Zero once backfilled, and
             # worth seeing if it ever climbs again.
@@ -2454,8 +2494,11 @@ def api_imperium_stats():
     unmatched = sorted({(p['level'] or '').strip() for p in plays
                         if (p['level'] or '').strip() and not p['civ']})
 
+    finished = sum(1 for p in plays
+                   if 'won' in p['res'] or 'lost' in p['res'])
     return jsonify({'expansions': expansions, 'unmatched_levels': unmatched,
                     'total_plays': len(plays),
+                    'total_games': finished,
                     'recorded': sum(1 for p in plays if p['civilisation']),
                     'from_text': sum(1 for p in plays if p['civ'] and not p['civilisation'])})
 
