@@ -1463,11 +1463,13 @@ def api_me():
             f"count(*) FILTER (WHERE game_title ILIKE %s) > 0" for _ in GAME_TRACKERS
         ) + ' FROM games', [t['match'] for t in GAME_TRACKERS])
     played = cur.fetchone()
-    payload['trackers'] = [
-        {'key': t['key'], 'label': t['label'], 'page': t['page'],
-         'blurb': t['blurb']}
-        for t, has in zip(GAME_TRACKERS, played) if has
-    ]
+    # Alphabetical, sorted here rather than by keeping the list above tidy —
+    # a tracker added at the end of that list still lands in the right place.
+    payload['trackers'] = sorted(
+        ({'key': t['key'], 'label': t['label'], 'page': t['page'],
+          'blurb': t['blurb']}
+         for t, has in zip(GAME_TRACKERS, played) if has),
+        key=lambda t: t['label'].lower())
 
     if user['is_owner']:
         # Belt and braces: if the notification email ever fails or gets
