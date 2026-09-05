@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=30">
+    <link rel="stylesheet" href="./styles.css?v=31">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -21,6 +21,27 @@
         .kv dd { margin: 0; overflow-wrap: anywhere; }
         .kv-rule { border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 10px 0; }
         .kv-notes { margin: 10px 0 0; font-size: 0.9em; overflow-wrap: anywhere; }
+
+        /* Photos: a picture of a half-finished board is the point, so thumbs
+           are big enough to recognise a position from. */
+        .shot-preview { display: flex; gap: 10px; align-items: flex-start; margin: 6px 0 4px; }
+        .shot-preview img { max-width: 130px; border-radius: 6px; display: block; }
+        .shot-size { display: block; color: #aaa; font-size: 0.78em; margin-bottom: 6px; }
+        .shot-clear { font-size: 0.75em; padding: 5px 10px; }
+        .shots { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 0; }
+        .shots img {
+            width: 104px; height: 104px; object-fit: cover; border-radius: 6px;
+            cursor: zoom-in; border: 1px solid rgba(255,255,255,0.15);
+        }
+        .shot-empty { color: #888; font-size: 0.82em; }
+        /* Full size, over the page — a board is unreadable at thumbnail size. */
+        #shot-viewer {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 50;
+            display: none; align-items: center; justify-content: center; padding: 12px;
+        }
+        #shot-viewer.open { display: flex; flex-direction: column; }
+        #shot-viewer img { max-width: 100%; max-height: 84vh; object-fit: contain; }
+        .shot-bar { margin-top: 10px; display: flex; gap: 8px; }
 
         /* Ares end state: a small you/bot grid, so eight numbers stay readable. */
         .ares-grid { border-collapse: collapse; width: 100%; margin-bottom: 6px; }
@@ -110,6 +131,15 @@
     </style>
 </head>
 <body>
+
+<!-- Full-size photo, over everything. Tapping the backdrop closes it. -->
+<div id="shot-viewer">
+    <img id="shot-viewer-img" alt="Photo of the table">
+    <div class="shot-bar">
+        <button type="button" id="shot-close">Close</button>
+        <button type="button" id="shot-delete" class="btn-red">Delete photo</button>
+    </div>
+</div>
 
 <!-- Tab bar: sticky so switching never means scrolling back up -->
 <div class="form-container" id="tabbar">
@@ -213,6 +243,19 @@
     </div>
     <label>Notes:</label>
     <textarea id="notes" rows="4" placeholder="Add any notes here..."></textarea>
+
+    <!-- capture="environment" asks a phone for the back camera directly; on a
+         desktop it degrades to an ordinary file picker. -->
+    <label>Photo of the table:</label>
+    <input type="file" id="photo" accept="image/*" capture="environment">
+    <div id="photo-preview" class="shot-preview" style="display:none;">
+        <img id="photo-thumb" alt="Photo to be attached">
+        <div>
+            <span id="photo-size" class="shot-size"></span>
+            <button type="button" id="photo-clear" class="btn-red shot-clear">Remove</button>
+        </div>
+    </div>
+
     <button id="log-btn">Log Game</button>
     <p id="log-status" class="status-ok" style="display:none;"></p>
 </div>
@@ -285,6 +328,12 @@
              or a missing level gets fixed. -->
         <div class="gi-card">
             <div class="gi-card-h">Last play <span id="gi-when" class="gi-sub"></span></div>
+            <!-- The picture of the table, if one was taken. -->
+            <div id="gi-shots" class="shots"></div>
+            <div id="gi-addshot" style="margin:8px 0 10px;">
+                <input type="file" id="gi-photo" accept="image/*" capture="environment"
+                       style="font-size:0.85em;">
+            </div>
             <div id="gi-edit"></div>
             <button id="gi-save">Save Changes</button>
             <p id="gi-save-status" class="status-ok" style="display:none;"></p>
@@ -390,7 +439,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=30"></script>
+<script src="./tabs.js?v=31"></script>
 <script>
 requireAuth();
 
@@ -710,6 +759,92 @@ document.getElementById('game_title').addEventListener('input', toggleSpiritIsla
 // setupAutocomplete dispatches change for exactly this reason.
 document.getElementById('game_title').addEventListener('change', toggleSpiritIsland);
 
+// ---- Photos ---------------------------------------------------------------
+// Shrunk in the browser before upload: a phone shot is 3-5 MB, and a board is
+// perfectly readable at a fraction of that.
+let pendingPhoto = null;
+
+document.getElementById('photo').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) { clearPendingPhoto(); return; }
+    pendingPhoto = await shrinkImage(file);
+    document.getElementById('photo-thumb').src = URL.createObjectURL(pendingPhoto);
+    document.getElementById('photo-size').textContent =
+        `${Math.round(pendingPhoto.size / 1024)} KB` +
+        (pendingPhoto.size < file.size
+            ? ` (shrunk from ${Math.round(file.size / 1024)} KB)` : '');
+    document.getElementById('photo-preview').style.display = '';
+});
+
+function clearPendingPhoto() {
+    pendingPhoto = null;
+    document.getElementById('photo').value = '';
+    document.getElementById('photo-preview').style.display = 'none';
+}
+document.getElementById('photo-clear').addEventListener('click', clearPendingPhoto);
+
+async function uploadPhoto(gameId, file) {
+    const form = new FormData();
+    form.append('photo', file, 'photo.jpg');
+    return apiUpload(`/api/games/${gameId}/photo`, form);
+}
+
+// The viewer. Photos are fetched with a token into blob URLs, so the id is
+// tracked separately for deleting.
+let viewingPhotoId = null;
+
+async function openShot(photoId) {
+    const url = await apiImageUrl(`/api/photos/${photoId}`);
+    if (!url) return;
+    viewingPhotoId = photoId;
+    document.getElementById('shot-viewer-img').src = url;
+    document.getElementById('shot-viewer').classList.add('open');
+}
+
+function closeShot() {
+    document.getElementById('shot-viewer').classList.remove('open');
+    viewingPhotoId = null;
+}
+document.getElementById('shot-close').addEventListener('click', closeShot);
+document.getElementById('shot-viewer').addEventListener('click', e => {
+    if (e.target.id === 'shot-viewer') closeShot();   // backdrop only
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeShot(); });
+
+document.getElementById('shot-delete').addEventListener('click', async () => {
+    if (viewingPhotoId === null) return;
+    if (!confirm('Delete this photo? It cannot be undone.')) return;
+    const id = viewingPhotoId;
+    const res = await apiFetch(`/api/photos/${id}`, { method: 'DELETE' });
+    const out = res ? await res.json() : null;
+    if (!out?.success) { alert(out?.message || 'Could not delete it.'); return; }
+    forgetImage(`/api/photos/${id}`);
+    closeShot();
+    lookUpGame();          // redraw the strip without it
+});
+
+// Thumbnails for one play, loaded one at a time so a play with several photos
+// doesn't fire six requests at once over a phone connection.
+async function renderShots(containerId, photos) {
+    const box = document.getElementById(containerId);
+    if (!box) return;
+    if (!photos?.length) {
+        box.innerHTML = '<span class="shot-empty">No photo for this play.</span>';
+        return;
+    }
+    box.innerHTML = '';
+    for (const p of photos) {
+        const url = await apiImageUrl(`/api/photos/${p.id}`);
+        if (!url) continue;
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = `Photo from ${p.taken ? p.taken.slice(0, 10) : 'this play'}`;
+        img.title = `${Math.round(p.bytes / 1024)} KB — tap to enlarge`;
+        img.addEventListener('click', () => openShot(p.id));
+        box.appendChild(img);
+    }
+}
+
 // Log game
 document.getElementById('log-btn').addEventListener('click', async () => {
     const btn = document.getElementById('log-btn');
@@ -748,9 +883,20 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         payload.level = document.getElementById('level').value;
     }
     const data = await apiPost('/api/add_game', payload);
+    // The photo needs the id of the row that was just written, so it goes up
+    // after the play rather than with it.
+    let photoNote = '';
+    if (data?.success && pendingPhoto && data.id) {
+        status.textContent = 'Logged — sending photo…';
+        status.className = 'status-ok';
+        status.style.display = '';
+        const up = await uploadPhoto(data.id, pendingPhoto);
+        photoNote = up?.success ? ' Photo attached.'
+            : ` Photo failed: ${up?.message || 'unknown'}`;
+    }
     btn.disabled = false;
     if (data?.success) {
-        status.textContent = 'Logged!';
+        status.textContent = 'Logged!' + photoNote;
         status.className = 'status-ok';
         status.style.display = '';
         ['game_title','result','level','my_score','bot_score','notes'].forEach(id => document.getElementById(id).value = '');
@@ -767,6 +913,7 @@ document.getElementById('log-btn').addEventListener('click', async () => {
         document.getElementById('ares-fields').style.display = 'none';
         document.getElementById('score-fields').style.display = '';
         document.getElementById('level-field').style.display = '';
+        clearPendingPhoto();
         loadStats();
         loadRecentPlays();
         setTimeout(() => status.style.display = 'none', 3000);
@@ -947,10 +1094,34 @@ async function lookUpGame() {
     renderProgress(data.latest_detailed);
     renderStats(s);
     document.getElementById('gi-when').textContent = giDate(data.last.date_played);
+    await renderShots('gi-shots', data.last.photos);
+    document.getElementById('gi-photo').value = '';
     await renderEdit(data.last, data.title);
     document.getElementById('gi-save-status').style.display = 'none';
     panel.style.display = '';
 }
+
+// Adding a photo to a play already logged — the common case being that you
+// took it, then remembered to attach it.
+document.getElementById('gi-photo').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !giPlay) return;
+    const status = document.getElementById('gi-save-status');
+    status.style.display = '';
+    status.className = 'status-ok';
+    status.textContent = 'Shrinking photo…';
+    const shrunk = await shrinkImage(file);
+    status.textContent = `Sending ${Math.round(shrunk.size / 1024)} KB…`;
+    const up = await uploadPhoto(giPlay.id, shrunk);
+    if (up?.success) {
+        status.textContent = 'Photo added.';
+        lookUpGame();
+    } else {
+        status.textContent = 'Photo failed: ' + (up?.message || 'unknown');
+        status.className = 'status-err';
+    }
+    e.target.value = '';
+});
 
 document.getElementById('search-btn').addEventListener('click', lookUpGame);
 document.getElementById('search_title').addEventListener('keydown', e => {

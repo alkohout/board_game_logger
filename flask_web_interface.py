@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, g, has_request_context
+from flask import Flask, request, jsonify, g, has_request_context, Response
 from flask_cors import CORS
 import psycopg2
 import psycopg2.pool
@@ -1553,7 +1553,8 @@ def api_users():
 # left its campaign behind — rows owned by an id that no longer exists, visible
 # to nobody and never cleaned up. check_owned_tables below now catches that.
 USER_OWNED_TABLES = ('ai_usage', 'credit_purchases', 'rulebooks',
-                     'sleeping_gods', 'sleeping_gods_totems', 'games')
+                     'sleeping_gods', 'sleeping_gods_totems', 'game_photos',
+                     'games')
 
 
 def check_owned_tables():
@@ -1798,19 +1799,127 @@ def api_add_game():
             " scenario_number, ares_temp_me, ares_oxygen_me, ares_oceans_me,"
             " ares_mc_me, ares_temp_bot, ares_oxygen_bot, ares_oceans_bot,"
             " ares_mc_bot)"
-            " VALUES (" + ",".join(["%s"] * 24) + ")",
+            " VALUES (" + ",".join(["%s"] * 24) + ") RETURNING id",
             (data.get('date_played'), data.get('game_title'), data.get('notes', ''),
              data.get('result', ''), data.get('level', ''), data.get('my_score', ''), data.get('bot_score', ''),
              spirit, adversary, level, scenario, imperium_civilisation(data),
              imperium_my_civilisation(data), *ark_nova_fields(data),
              scenario_number_value(data), *ares_fields(data))
         )
+        # Returned so the form can attach a photo to the sitting it just made.
+        new_id = cur.fetchone()[0]
         conn.commit()
         cur.close()
         conn.close()
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'id': new_id})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ── Photos of a sitting ───────────────────────────────────────────────────────
+# A game left set up mid-turn is easier to come back to with a picture of the
+# board than with a note about it.
+
+PHOTO_MAX_BYTES = 6 * 1024 * 1024
+PHOTO_TYPES = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp'}
+
+
+def photo_rows(cur, game_id):
+    """Everything about a game's photos except the bytes themselves.
+
+    The image column is deliberately not selected: a list of six photos would
+    otherwise drag megabytes through a request that only needs their ids.
+    """
+    cur.execute("""SELECT id, mime, byte_size, caption, created_at
+                   FROM game_photos WHERE game_id = %s
+                   ORDER BY id""", (game_id,))
+    return [{'id': r[0], 'mime': r[1], 'bytes': r[2], 'caption': r[3],
+             'taken': r[4].isoformat() if r[4] else None}
+            for r in cur.fetchall()]
+
+
+@app.route('/api/games/<int:game_id>/photos')
+def api_game_photos(game_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    rows = photo_rows(cur, game_id)
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'photos': rows})
+
+
+@app.route('/api/games/<int:game_id>/photo', methods=['POST'])
+def api_add_game_photo(game_id):
+    upload = request.files.get('photo')
+    if not upload or not upload.filename:
+        return jsonify({'success': False, 'message': 'No photo sent.'}), 400
+
+    mime = (upload.mimetype or '').lower()
+    if mime not in PHOTO_TYPES:
+        return jsonify({'success': False,
+                        'message': 'Photos must be JPEG, PNG or WebP.'}), 400
+    upload.stream.seek(0)
+    blob = upload.stream.read()
+    if not blob:
+        return jsonify({'success': False, 'message': 'That photo was empty.'}), 400
+    if len(blob) > PHOTO_MAX_BYTES:
+        return jsonify({'success': False,
+                        'message': 'That photo is too big — it should be shrunk '
+                                   'before sending.'}), 413
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Row-level security means this finds nothing if the sitting isn't yours,
+    # so a stranger's id can't have a photo hung off it.
+    cur.execute("SELECT 1 FROM games WHERE id = %s", (game_id,))
+    if not cur.fetchone():
+        cur.close(); conn.close()
+        return jsonify({'success': False, 'message': 'No such play.'}), 404
+
+    cur.execute("""INSERT INTO game_photos (game_id, image, mime, byte_size, caption)
+                   VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+                (game_id, psycopg2.Binary(blob), mime, len(blob),
+                 (request.form.get('caption') or '').strip()[:200] or None))
+    photo_id = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'id': photo_id, 'bytes': len(blob)})
+
+
+@app.route('/api/photos/<int:photo_id>')
+def api_photo(photo_id):
+    """The image itself.
+
+    Fetched with a bearer token like everything else, which is why the page
+    loads it through JavaScript into a blob URL — an <img src> can't carry an
+    Authorization header, and putting photos on a public URL would undo the
+    isolation the rest of the app has.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT image, mime FROM game_photos WHERE id = %s", (photo_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return jsonify({'success': False, 'message': 'No such photo.'}), 404
+    return Response(bytes(row[0]), mimetype=row[1],
+                    headers={'Cache-Control': 'private, max-age=86400'})
+
+
+@app.route('/api/photos/<int:photo_id>', methods=['DELETE'])
+def api_delete_photo(photo_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM game_photos WHERE id = %s", (photo_id,))
+    removed = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    if not removed:
+        return jsonify({'success': False, 'message': 'No such photo.'}), 404
+    return jsonify({'success': True})
 
 
 @app.route('/api/games_overview')
@@ -2590,6 +2699,7 @@ def api_game_info():
         cur.close(); conn.close()
         return jsonify({'success': False, 'message': f'No plays found for "{term}".'}), 404
     last = play_row(row)
+    last['photos'] = photo_rows(cur, last['id'])
     title = last['game_title']
 
     # The most recent play that recorded anything — where the "what to try
