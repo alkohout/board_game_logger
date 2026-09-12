@@ -1,4 +1,5 @@
 """Saved game state: kept, resumed, and never another account's."""
+import re
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -96,9 +97,20 @@ print('\nTHE BOARD REFERENCE IS COPIED, NOT GUESSED')
 check('there is an editor for it', 'ref-editor' in page, True)
 check('  covering all four tables',
       all(f"key: '{x}'" in page for x in ('appeal', 'conservation', 'reputation', 'rounds')), True)
-check('  seeded only with what the rulebook states', "at: 7, text: '11'" in page, True)
-check('  and nothing invented for reputation',
-      "reputation: [{ at: 1, text: '' }]" in page, True)
+check('  appeal 7 pays 11, as the rulebook states', "at: 7, text: '11'" in page, True)
+# The income bands were read off the board photo rather than the rulebook, so
+# the check that matters is that they tile the track: every appeal 0-113 lands
+# in exactly one band, and the incomes run 5 to 37 with none missing or twice.
+bands = sorted((int(a), int(t)) for a, t in
+               re.findall(r"\{ at: (\d+), text: '(\d+)' \}", page))
+check('  income bands run 5 to 37', [t for _, t in bands], list(range(5, 38)))
+check('  covering appeal 0 to 113 exactly',
+      sum((bands[i + 1][0] - 1 if i + 1 < len(bands) else 113) - a + 1
+          for i, (a, _) in enumerate(bands)), 114)
+check('  and the round reminders left blank, being icons on the board',
+      "rounds: [{ at: 1, text: '' }]" in page, True)
+check('  with a way back to the printed values', "id='ref-reset'" in page or
+      'id="ref-reset"' in page, True)
 check('a marker reads the band at or below it', 'function bandFor' in page, True)
 check('  and shows what is coming', 'function nextBand' in page, True)
 check('a milestone announces once', 'st.seen.includes' in page, True)

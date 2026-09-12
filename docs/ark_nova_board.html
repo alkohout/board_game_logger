@@ -105,12 +105,13 @@
         <details class="ref" id="ref-panel">
             <summary>What's printed on the board — fill in once</summary>
             <p style="color:#888; font-size:0.85em;">
-                These numbers are on the board itself and aren't in the rulebook,
-                so rather than guess at them they're yours to copy across. Do it
-                once and every game after reads from them. Starting a new game
-                doesn't clear them.</p>
+                These numbers are on the board itself and aren't in the rulebook.
+                They're filled in from the board photo on your 2026-09-12 log;
+                edit anything that's wrong and save. Starting a new game doesn't
+                clear them.</p>
             <div id="ref-editor"></div>
             <button id="ref-save">Save reference</button>
+            <button id="ref-reset" class="btn-red">Reload the printed values</button>
             <span id="ref-saved" class="saved"></span>
         </details>
     </div>
@@ -132,14 +133,58 @@
         // second place to get them wrong.
         const BLANK = { appeal: 0, conservation: 0, reputation: 1, seen: [] };
 
-        // Everything printed on the board. Seeded with the one value the
-        // rulebook actually states — appeal 7 pays 11 — and the conservation
-        // milestones it names. The rest is blank rather than invented.
+        // Everything printed on the board, read off the photo on the
+        // 2026-09-12 log. The income bands self-check: five single spaces,
+        // then bands of 2, 3, 4, 5 and 6 that tile appeal 0-113 exactly and
+        // hand out incomes 5 to 37 with none missing or repeated.
         const BLANK_REF = {
-            appeal: [{ at: 0, text: '' }, { at: 7, text: '11' }],
-            conservation: [{ at: 2, text: '' }, { at: 5, text: '' },
-                           { at: 8, text: '' }, { at: 10, text: '' }],
-            reputation: [{ at: 1, text: '' }],
+            appeal: [
+                { at: 0, text: '5' },   { at: 1, text: '6' },   { at: 2, text: '7' },
+                { at: 3, text: '8' },   { at: 4, text: '9' },   { at: 5, text: '10' },
+                { at: 7, text: '11' },  { at: 9, text: '12' },  { at: 11, text: '13' },
+                { at: 13, text: '14' }, { at: 15, text: '15' }, { at: 17, text: '16' },
+                { at: 20, text: '17' }, { at: 23, text: '18' }, { at: 26, text: '19' },
+                { at: 29, text: '20' }, { at: 32, text: '21' }, { at: 36, text: '22' },
+                { at: 40, text: '23' }, { at: 44, text: '24' }, { at: 48, text: '25' },
+                { at: 52, text: '26' }, { at: 56, text: '27' }, { at: 61, text: '28' },
+                { at: 66, text: '29' }, { at: 71, text: '30' }, { at: 76, text: '31' },
+                { at: 81, text: '32' }, { at: 86, text: '33' }, { at: 91, text: '34' },
+                { at: 96, text: '35' }, { at: 102, text: '36' }, { at: 108, text: '37' },
+            ],
+            // The shields are all on the board; only the first four carry
+            // printed rewards, and at 5, 8 and 10 the photo shows the spaces
+            // after the tiles were taken. Those read "check the board" rather
+            // than a guess at what was on them.
+            conservation: [
+                { at: 2,  text: 'Two bonus tiles: upgrade an action card to II, and +1 worker' },
+                { at: 5,  text: 'Two bonus tiles + a 5 token — tiles already taken in the photo, check the board' },
+                { at: 8,  text: 'Two bonus tiles + a 5 token — tiles already taken in the photo, check the board' },
+                { at: 10, text: 'Removes a break tile (red hourglass) — check the board' },
+                { at: 15, text: '' }, { at: 20, text: '' }, { at: 25, text: '' },
+                { at: 30, text: '' }, { at: 35, text: '' }, { at: 40, text: '' },
+            ],
+            // Each reputation space sits above the display slot it opens, so
+            // the threshold is the first space over that slot. The bonuses sit
+            // between spaces on the board; each is listed on the space you
+            // reach to claim it.
+            reputation: [
+                { at: 1,  text: 'Display card 1' },
+                { at: 2,  text: 'Display cards 1-2' },
+                { at: 4,  text: 'Display cards 1-3' },
+                { at: 5,  text: 'Bonus: upgrade an action card to II' },
+                { at: 7,  text: 'Display cards 1-4' },
+                { at: 8,  text: 'Bonus: +1 worker' },
+                { at: 10, text: 'Display cards 1-5 — bonus: a card tile (white card icon)' },
+                { at: 11, text: 'Bonus: +1 conservation point' },
+                { at: 12, text: 'Bonus: an X-token' },
+                { at: 13, text: 'Display cards 1-6 — bonus: a card tile (white card icon)' },
+                { at: 14, text: 'Bonus: +1 conservation point' },
+                { at: 15, text: 'Bonus: an X-token' },
+            ],
+            // The board prints a six-step break sequence in icons only. They
+            // are legible but not unambiguous, and a play aid that gets the
+            // order of a break wrong is worse than no play aid, so this is
+            // left for you to write in from the rulebook.
             rounds: [{ at: 1, text: '' }],
         };
         const REF_SECTIONS = [
@@ -333,6 +378,17 @@
                 renderRef();
             });
         }
+
+        // A reference saved before these values were filled in would otherwise
+        // shadow them forever, since a saved section replaces the default
+        // outright. This puts the printed board back within reach.
+        document.getElementById('ref-reset').addEventListener('click', () => {
+            if (!confirm('Replace the reference with the values printed on the board? Your edits to it are lost.')) return;
+            ref = JSON.parse(JSON.stringify(BLANK_REF));
+            renderRef();
+            render();
+            document.getElementById('ref-saved').textContent = 'Reloaded — press Save reference to keep it';
+        });
 
         document.getElementById('ref-save').addEventListener('click', async () => {
             // Kept under its own key, so starting a new game never wipes the
