@@ -137,8 +137,9 @@
 
         // Cards marked "max. 25" are only playable while appeal is 25 or less.
         // The board prints that marker at 25, which assumes appeal started at
-        // 0; solo starts higher, so the limit moves with it and the solo token
-        // reads 35 for a start of 10 and 45 for a start of 20.
+        // 0. The limit is 25 above wherever appeal started, for any start —
+        // the solo token's two faces, 35 and 45, are just the two the rulebook
+        // suggests. Not a lookup of 0/10/20.
         function appealLimit() {
             return 25 + (st.start || 0);
         }
@@ -372,8 +373,8 @@
                 `<button id="start-edit" class="linkish">change</button>`;
             document.getElementById('start-edit').onclick = () => {
                 const v = prompt('What appeal did this game start at?\n\n' +
-                    'It sets the limit for "max. 25" cards: 25 from a start of 0, ' +
-                    '35 from 10, 45 from 20.', String(st.start || 0));
+                    'Cards marked "max. 25" stay playable to 25 above it, wherever ' +
+                    'it starts — so 45 from a start of 20.', String(st.start || 0));
                 if (v === null) return;
                 const n = parseInt(v, 10);
                 if (!Number.isFinite(n) || n < 0 || n > 113) {

@@ -148,8 +148,12 @@ print('\nTHE MAX-25 LIMIT MOVES WITH THE STARTING APPEAL')
 # prints that at 25, which assumes a start of 0; solo starts higher, and the
 # solo token reads 35 and 45 for starts of 10 and 20.
 check('the limit is 25 above the start', '25 + (st.start || 0)' in page, True)
-check('  which is 25, 35 and 45 for the three solo starts',
-      [25 + n for n in (0, 10, 20)], [25, 35, 45])
+# The rulebook names three solo starts but the log records seven, so the limit
+# has to be arithmetic on the start rather than a lookup of 0/10/20. Reading
+# 35 or 45 out of the limit logic would mean someone turned it into one.
+limit_src = page.split('function appealLimit()')[1].split('}')[0]
+check('  by arithmetic, not a lookup of the three solo starts',
+      [n for n in ('35', '45', '10', '20') if n in limit_src], [])
 check('a game records where appeal started', "start: 0, seen: []" in page, True)
 check('  set by the new-game prompt', 'start: start, seen: []' in page, True)
 check('  and correctable without resetting', "id=\"start-edit\"" in page, True)
