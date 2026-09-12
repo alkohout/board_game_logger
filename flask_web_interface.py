@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, g, has_request_context, Response
 from flask_cors import CORS
+import json
 import psycopg2
 import psycopg2.pool
 import threading
@@ -1442,6 +1443,8 @@ GAME_TRACKERS = [
      'blurb': 'Locations, totems and endings', 'match': '%sleeping gods%'},
     {'key': 'ark_nova', 'label': 'Ark Nova', 'page': 'ark_nova.html',
      'blurb': 'Maps and starting appeal', 'match': '%ark nova%'},
+    {'key': 'ark_nova_board', 'label': 'Ark Nova board', 'page': 'ark_nova_board.html',
+     'blurb': 'Play aid: stands in for the big board', 'match': '%ark nova%'},
     {'key': 'cascadia', 'label': 'Cascadia', 'page': 'cascadia.html',
      'blurb': 'The solo scenario ladder', 'match': '%cascadia%'},
     {'key': 'ares', 'label': 'Ares Expedition', 'page': 'ares.html',
@@ -1554,7 +1557,7 @@ def api_users():
 # to nobody and never cleaned up. check_owned_tables below now catches that.
 USER_OWNED_TABLES = ('ai_usage', 'credit_purchases', 'rulebooks',
                      'sleeping_gods', 'sleeping_gods_totems', 'game_photos',
-                     'games')
+                     'game_state', 'games')
 
 
 def check_owned_tables():
@@ -1814,6 +1817,62 @@ def api_add_game():
         return jsonify({'success': True, 'id': new_id})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ── A game in progress ────────────────────────────────────────────────────────
+# State for a play aid, kept server-side so it survives a closed tab and
+# follows you from the phone at the table to a laptop afterwards.
+
+GAME_STATE_MAX_BYTES = 64 * 1024
+
+
+@app.route('/api/game_state/<key>')
+def api_get_game_state(key):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT state, updated_at FROM game_state WHERE game_key = %s""",
+                (key[:40],))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True,
+                    'state': row[0] if row else None,
+                    'updated': row[1].isoformat() if row else None})
+
+
+@app.route('/api/game_state/<key>', methods=['POST'])
+def api_put_game_state(key):
+    state = (request.get_json() or {}).get('state')
+    if not isinstance(state, dict):
+        return jsonify({'success': False, 'message': 'State must be an object.'}), 400
+    blob = json.dumps(state)
+    if len(blob) > GAME_STATE_MAX_BYTES:
+        return jsonify({'success': False, 'message': 'That state is too large.'}), 413
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # One row per account per game: saving again replaces what's there rather
+    # than piling up a history nobody asked for.
+    cur.execute("""INSERT INTO game_state (game_key, state)
+                   VALUES (%s, %s)
+                   ON CONFLICT (user_id, game_key) DO UPDATE
+                       SET state = EXCLUDED.state, updated_at = now()""",
+                (key[:40], blob))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True})
+
+
+@app.route('/api/game_state/<key>', methods=['DELETE'])
+def api_clear_game_state(key):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM game_state WHERE game_key = %s", (key[:40],))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True})
 
 
 # ── Photos of a sitting ───────────────────────────────────────────────────────

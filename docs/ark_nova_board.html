@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ark Nova Board</title>
+    <link rel="stylesheet" href="./styles.css?v=32">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <style>
+        /* Built to be used one-handed at the table, so targets are large and
+           16px text stops iOS zooming when anything gets focus. */
+        .board { display: grid; gap: 10px; }
+        .track {
+            border: 1px solid rgba(255,255,255,0.15); border-radius: 8px;
+            padding: 10px 12px; background: rgba(255,255,255,0.03);
+        }
+        .track-head {
+            display: flex; justify-content: space-between; align-items: baseline;
+            font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.06em;
+            color: #FFD54F; margin-bottom: 6px;
+        }
+        .track-note { color: #888; font-size: 0.9em; text-transform: none; letter-spacing: 0; }
+        .stepper { display: flex; align-items: center; gap: 10px; }
+        .stepper button {
+            width: 52px; height: 52px; font-size: 1.4em; margin: 0; padding: 0;
+            border-radius: 8px; flex: none;
+        }
+        .stepper .val {
+            flex: 1; text-align: center; font-size: 2em; font-weight: bold;
+            font-variant-numeric: tabular-nums;
+        }
+        .stepper .step10 { width: 44px; height: 44px; font-size: 0.9em; opacity: 0.75; }
+        .appeal .val { color: #FF8A65; }
+        .conservation .val { color: #90EE90; }
+
+        /* The gap between the two markers is the game's clock, so it gets a bar
+           rather than a number to squint at. */
+        .gap-bar { height: 10px; border-radius: 5px; background: rgba(255,255,255,0.1);
+                   overflow: hidden; margin: 8px 0 4px; }
+        .gap-fill { height: 100%; background: linear-gradient(90deg,#90EE90,#FFD54F); }
+        .gap-text { font-size: 0.85em; color: #ccc; }
+        .gap-close { color: #FFD54F; font-weight: bold; }
+        .gap-met { color: #90EE90; font-weight: bold; }
+
+        .small-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .small-grid .stepper button { width: 44px; height: 44px; font-size: 1.2em; }
+        .small-grid .val { font-size: 1.5em; }
+
+        /* Association workers: tap a space to put a worker on it. */
+        .workers { display: flex; flex-wrap: wrap; gap: 6px; }
+        .worker {
+            flex: 1 1 30%; min-width: 96px; padding: 10px 6px; text-align: center;
+            border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
+            font-size: 0.85em; cursor: pointer; user-select: none;
+            background: rgba(255,255,255,0.03);
+        }
+        .worker.used { background: rgba(255,213,79,0.22); border-color: #FFD54F; color: #FFD54F; }
+
+        .milestones { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .ms {
+            font-size: 0.78em; padding: 3px 9px; border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.18); color: #888;
+        }
+        .ms.hit { background: rgba(144,238,144,0.18); border-color: #90EE90; color: #90EE90; }
+        .ms.next { border-color: #FFD54F; color: #FFD54F; }
+
+        /* What's coming, from the numbers — not from card text. */
+        .ahead { margin: 0; padding: 10px 12px; border-left: 3px solid #FFD54F;
+                 background: rgba(255,213,79,0.07); font-size: 0.9em; }
+        .ahead ul { margin: 4px 0 0; padding-left: 18px; }
+        .ahead li { margin: 2px 0; }
+
+        #alerts { position: sticky; top: 0; z-index: 5; }
+        .alert {
+            padding: 10px 12px; border-radius: 8px; margin-bottom: 6px;
+            background: #2e7d32; font-weight: bold; cursor: pointer;
+        }
+        .alert.warn { background: #7a5c00; }
+        .saved { color: #888; font-size: 0.78em; text-align: right; }
+    </style>
+</head>
+<body>
+
+<div class="form-container" id="tabbar">
+    <h1 style="margin:0 0 10px;">Board Game Logger</h1>
+    <div id="tabbar-mount"></div>
+</div>
+
+    <div class="form-container">
+        <h2>Ark Nova — the big board</h2>
+        <p style="color:#ccc; font-size:0.9em; margin:0 0 4px;">
+            Stands in for the shared board so it can stay in the box. Keep your
+            zoo map, the conservation board and the cards on the table.</p>
+        <div id="alerts"></div>
+        <div class="board" id="board"><p style="color:#aaa;">Loading…</p></div>
+        <p class="saved" id="saved"></p>
+        <nav style="margin-top:12px;">
+            <button class="btn-red" id="reset">Start a new game</button>
+        </nav>
+    </div>
+
+    <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script src="./tabs.js?v=32"></script>
+    <script>
+        requireAuth();
+        renderTabs('games');
+
+        const esc = s => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        // Verified against the rules: conservation pays out at 2, 5, 8 and 10,
+        // and the break fires when the break track reaches 15. Reputation's
+        // bonus spaces are deliberately absent — I couldn't confirm them, and a
+        // made-up threshold that fires at the wrong moment is worse than none.
+        const CONSERVATION_MILESTONES = [2, 5, 8, 10];
+        const BREAK_AT = 15;
+
+        const BLANK = {
+            appeal: 0, conservation: 0, reputation: 0, money: 25, x: 0,
+            breaks: 0, round: 1, botAppeal: 0,
+            workers: [false, false, false, false, false],
+            seen: [],            // milestones already announced
+            started: null,
+        };
+        const WORKER_SPACES = ['Reputation', 'Partner zoo', 'University',
+                               'Conservation', 'Association'];
+
+        let st = { ...BLANK };
+        let saveTimer = null;
+
+        function announce(text, warn) {
+            const box = document.getElementById('alerts');
+            const div = document.createElement('div');
+            div.className = 'alert' + (warn ? ' warn' : '');
+            div.textContent = text;
+            div.addEventListener('click', () => div.remove());
+            box.appendChild(div);
+        }
+
+        // Fires once per threshold. Without the seen list every redraw would
+        // re-announce everything already passed, which is noise not news.
+        function checkMilestones(before) {
+            CONSERVATION_MILESTONES.forEach(m => {
+                const key = 'cons' + m;
+                if (st.conservation >= m && !st.seen.includes(key)) {
+                    st.seen.push(key);
+                    if (before !== null) announce(`Conservation ${m} reached — take the bonus.`);
+                }
+            });
+            if (st.breaks >= BREAK_AT && !st.seen.includes('break' + st.round)) {
+                st.seen.push('break' + st.round);
+                if (before !== null) announce(`Break! Take an X-token, then reset the break track.`, true);
+            }
+            const met = st.conservation >= st.appeal && st.appeal > 0;
+            if (met && !st.seen.includes('met')) {
+                st.seen.push('met');
+                if (before !== null) announce('Markers have met — this is the final round.', true);
+            }
+        }
+
+        function stepper(field, label, note, cls, min, big) {
+            const v = st[field];
+            return `<div class="track ${cls || ''}">
+                <div class="track-head"><span>${esc(label)}</span>
+                    <span class="track-note">${note || ''}</span></div>
+                <div class="stepper">
+                    <button data-dec="${field}" aria-label="${esc(label)} down">−</button>
+                    ${big ? `<button class="step10" data-dec10="${field}">−10</button>` : ''}
+                    <span class="val">${v}</span>
+                    ${big ? `<button class="step10" data-inc10="${field}">+10</button>` : ''}
+                    <button data-inc="${field}" aria-label="${esc(label)} up">+</button>
+                </div>
+            </div>`;
+        }
+
+        function render() {
+            const gap = st.appeal - st.conservation;
+            const met = st.conservation >= st.appeal && st.appeal > 0;
+            // The bar shows how far conservation has closed on appeal, which is
+            // the actual clock in a solo game.
+            const closed = st.appeal > 0
+                ? Math.max(0, Math.min(100, (st.conservation / st.appeal) * 100)) : 0;
+
+            const msPills = CONSERVATION_MILESTONES.map(m => {
+                const hit = st.conservation >= m;
+                const next = !hit && CONSERVATION_MILESTONES.filter(x => x > st.conservation)[0] === m;
+                return `<span class="ms${hit ? ' hit' : next ? ' next' : ''}">${m}</span>`;
+            }).join('');
+
+            const nextMs = CONSERVATION_MILESTONES.find(m => m > st.conservation);
+            const ahead = [];
+            if (met) ahead.push('<strong>Markers have met — final round.</strong>');
+            else ahead.push(`Conservation needs <strong>${gap}</strong> more to reach appeal.`);
+            if (nextMs) ahead.push(`Next conservation bonus at <strong>${nextMs}</strong> — ${nextMs - st.conservation} away.`);
+            ahead.push(`Break track <strong>${st.breaks}</strong> of ${BREAK_AT}` +
+                       (st.breaks >= BREAK_AT ? ' — break due.' : ` — ${BREAK_AT - st.breaks} to go.`));
+            if (st.botAppeal) {
+                const d = st.appeal - st.botAppeal;
+                ahead.push(`Bot appeal <strong>${st.botAppeal}</strong> — you are ${
+                    d === 0 ? 'level' : d > 0 ? `${d} ahead` : `${-d} behind`}.`);
+            }
+
+            document.getElementById('board').innerHTML =
+                stepper('appeal', 'Appeal', '', 'appeal', 0, true) +
+                stepper('conservation', 'Conservation', '', 'conservation', 0, false) +
+                `<div class="track">
+                    <div class="track-head"><span>Markers</span>
+                        <span class="track-note ${met ? 'gap-met' : gap <= 5 ? 'gap-close' : ''}">${
+                            met ? 'met — final round' : `${gap} apart`}</span></div>
+                    <div class="gap-bar"><div class="gap-fill" style="width:${closed.toFixed(1)}%"></div></div>
+                    <div class="gap-text">Conservation milestones ${msPills}</div>
+                </div>` +
+                `<div class="small-grid">
+                    ${stepper('breaks', 'Break track', `of ${BREAK_AT}`)}
+                    ${stepper('reputation', 'Reputation', '')}
+                    ${stepper('money', 'Money', '')}
+                    ${stepper('x', 'X-tokens', '')}
+                    ${stepper('round', 'Round', '')}
+                    ${stepper('botAppeal', 'Bot appeal', '')}
+                </div>` +
+                `<div class="track">
+                    <div class="track-head"><span>Association workers</span>
+                        <span class="track-note">${st.workers.filter(Boolean).length} placed</span></div>
+                    <div class="workers">${WORKER_SPACES.map((w, i) =>
+                        `<div class="worker${st.workers[i] ? ' used' : ''}" data-worker="${i}">${esc(w)}</div>`
+                    ).join('')}</div>
+                </div>` +
+                `<p class="ahead"><strong>Where this stands</strong><ul>${
+                    ahead.map(a => `<li>${a}</li>`).join('')}</ul></p>`;
+
+            document.querySelectorAll('[data-inc]').forEach(b =>
+                b.onclick = () => bump(b.dataset.inc, 1));
+            document.querySelectorAll('[data-dec]').forEach(b =>
+                b.onclick = () => bump(b.dataset.dec, -1));
+            document.querySelectorAll('[data-inc10]').forEach(b =>
+                b.onclick = () => bump(b.dataset.inc10, 10));
+            document.querySelectorAll('[data-dec10]').forEach(b =>
+                b.onclick = () => bump(b.dataset.dec10, -10));
+            document.querySelectorAll('[data-worker]').forEach(w =>
+                w.onclick = () => {
+                    st.workers[+w.dataset.worker] = !st.workers[+w.dataset.worker];
+                    render(); save();
+                });
+        }
+
+        function bump(field, by) {
+            st[field] = Math.max(0, (st[field] || 0) + by);
+            // Resetting the break track past a break clears the flag so the
+            // next one announces itself too.
+            if (field === 'breaks' && st.breaks < BREAK_AT) {
+                st.seen = st.seen.filter(k => !k.startsWith('break'));
+            }
+            checkMilestones(true);
+            render();
+            save();
+        }
+
+        function save() {
+            clearTimeout(saveTimer);
+            // Debounced: tapping + five times shouldn't be five round trips.
+            saveTimer = setTimeout(async () => {
+                const res = await apiPost('/api/game_state/ark_nova', { state: st });
+                document.getElementById('saved').textContent = res?.success
+                    ? 'Saved ' + new Date().toLocaleTimeString()
+                    : 'Not saved — check your connection';
+            }, 600);
+        }
+
+        document.getElementById('reset').addEventListener('click', async () => {
+            if (!confirm('Start a new game? The current numbers are cleared.')) return;
+            st = { ...BLANK, workers: [false, false, false, false, false], seen: [],
+                   started: new Date().toISOString().slice(0, 10) };
+            document.getElementById('alerts').innerHTML = '';
+            render();
+            await apiPost('/api/game_state/ark_nova', { state: st });
+            document.getElementById('saved').textContent = 'New game started';
+        });
+
+        async function load() {
+            const d = await apiGet('/api/game_state/ark_nova');
+            if (d?.state && typeof d.state === 'object') {
+                st = { ...BLANK, ...d.state };
+                st.workers = Array.isArray(st.workers) ? st.workers : [...BLANK.workers];
+                st.seen = Array.isArray(st.seen) ? st.seen : [];
+                document.getElementById('saved').textContent =
+                    d.updated ? 'Last saved ' + new Date(d.updated).toLocaleString() : '';
+            }
+            // null on the first pass: catch up the seen list without firing a
+            // banner for every threshold already passed days ago.
+            checkMilestones(null);
+            render();
+        }
+        load();
+    </script>
+</body>
+</html>
