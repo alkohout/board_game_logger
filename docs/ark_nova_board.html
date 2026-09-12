@@ -49,6 +49,8 @@
         .gap-fill { height: 100%; background: linear-gradient(90deg,#90EE90,#FFD54F); }
         .gap-met { color: #90EE90; font-weight: bold; }
         .gap-close { color: #FFD54F; font-weight: bold; }
+        .linkish { background: none; border: none; padding: 0 0 0 4px; font: inherit;
+                   color: #90CAF9; text-decoration: underline; cursor: pointer; width: auto; }
 
         .rounds li { margin: 3px 0; font-size: 0.9em; }
         .rounds .rnum { color: #FFD54F; font-weight: bold; margin-right: 6px; }
@@ -131,7 +133,15 @@
         // Markers only. Money, X-tokens, workers and the break track live on
         // components still on the table, so tracking them here would be a
         // second place to get them wrong.
-        const BLANK = { appeal: 0, conservation: 0, reputation: 1, seen: [] };
+        const BLANK = { appeal: 0, conservation: 0, reputation: 1, start: 0, seen: [] };
+
+        // Cards marked "max. 25" are only playable while appeal is 25 or less.
+        // The board prints that marker at 25, which assumes appeal started at
+        // 0; solo starts higher, so the limit moves with it and the solo token
+        // reads 35 for a start of 10 and 45 for a start of 20.
+        function appealLimit() {
+            return 25 + (st.start || 0);
+        }
 
         // Everything printed on the board, read off the photo on the
         // 2026-09-12 log. The income bands self-check: five single spaces,
@@ -268,6 +278,11 @@
                     if (live && r.text) announce(`Reputation ${r.at} — ${r.text}`);
                 }
             });
+            if (st.appeal > appealLimit() && !st.seen.includes('limit')) {
+                st.seen.push('limit');
+                if (live) announce(`Appeal is past ${appealLimit()} — cards marked "max. 25" can no longer be played.`, true);
+            }
+            if (st.appeal <= appealLimit()) st.seen = st.seen.filter(k => k !== 'limit');
             if (victoryPoints() >= 0 && !st.seen.includes('met')) {
                 st.seen.push('met');
                 // Solo runs its six breaks out either way, so this is the win
@@ -276,7 +291,7 @@
             }
         }
 
-        function stepper(field, label, cls, big) {
+        function stepper(field, label, cls, big, extra) {
             return `<div class="track ${cls}">
                 <div class="track-head"><span>${esc(label)}</span>
                     <span class="track-note" id="note-${field}"></span></div>
@@ -288,6 +303,7 @@
                     <button data-inc="${field}" aria-label="${esc(label)} up">+</button>
                 </div>
                 <div class="payoff" id="pay-${field}"></div>
+                ${extra || ''}
             </div>`;
         }
 
@@ -324,7 +340,8 @@
                 : '';
 
             document.getElementById('board').innerHTML =
-                stepper('appeal', 'Appeal', 'appeal', true) +
+                stepper('appeal', 'Appeal', 'appeal', true,
+                        '<div class="track-note" id="start-note"></div>') +
                 stepper('conservation', 'Conservation', 'conservation', false) +
                 `<div class="track">
                     <div class="track-head"><span>Victory points</span>
@@ -341,6 +358,34 @@
             document.getElementById('pay-appeal').innerHTML =
                 payoffHtml(ref.appeal, st.appeal, 'Income',
                            'fill in the appeal payouts below');
+            const limit = appealLimit();
+            const over = st.appeal > limit;
+            document.getElementById('note-appeal').innerHTML = over
+                ? `<span class="gap-close">past ${limit} — max-25 cards are out</span>`
+                : `max-25 cards to ${limit} (${limit - st.appeal} more)`;
+            // A game saved before this existed has no starting appeal, and it
+            // cannot be inferred from a marker that has already moved — so the
+            // limit is shown with the number it was worked out from, and that
+            // number can be corrected without resetting the game.
+            document.getElementById('start-note').innerHTML =
+                `started at ${st.start || 0} appeal ` +
+                `<button id="start-edit" class="linkish">change</button>`;
+            document.getElementById('start-edit').onclick = () => {
+                const v = prompt('What appeal did this game start at?\n\n' +
+                    'It sets the limit for "max. 25" cards: 25 from a start of 0, ' +
+                    '35 from 10, 45 from 20.', String(st.start || 0));
+                if (v === null) return;
+                const n = parseInt(v, 10);
+                if (!Number.isFinite(n) || n < 0 || n > 113) {
+                    alert('That is not an appeal between 0 and 113.');
+                    return;
+                }
+                st.start = n;
+                st.seen = st.seen.filter(k => k !== 'limit');
+                checkMilestones(false);
+                save();
+                render();
+            };
             document.getElementById('pay-conservation').innerHTML =
                 payoffHtml(ref.conservation, st.conservation, 'Last milestone',
                            'no milestone reached yet');
@@ -449,7 +494,7 @@
                 alert('That is not an appeal between 0 and 113 — nothing was reset.');
                 return;
             }
-            st = { ...BLANK, appeal: start, seen: [] };
+            st = { ...BLANK, appeal: start, start: start, seen: [] };
             document.getElementById('alerts').innerHTML = '';
             render();
             await apiPost('/api/game_state/ark_nova', { state: st });

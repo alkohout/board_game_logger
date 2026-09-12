@@ -143,6 +143,19 @@ check('  and conservation 20 meets at appeal 64', 64 - area(20)[0], 0)
 check('the solo win is 0 VP, not a final round', 'solo game is won' in page, True)
 check('  and a new game asks where appeal starts', 'Starting appeal?' in page, True)
 
+print('\nTHE MAX-25 LIMIT MOVES WITH THE STARTING APPEAL')
+# Cards marked "max. 25" are playable while appeal is 25 or less. The board
+# prints that at 25, which assumes a start of 0; solo starts higher, and the
+# solo token reads 35 and 45 for starts of 10 and 20.
+check('the limit is 25 above the start', '25 + (st.start || 0)' in page, True)
+check('  which is 25, 35 and 45 for the three solo starts',
+      [25 + n for n in (0, 10, 20)], [25, 35, 45])
+check('a game records where appeal started', "start: 0, seen: []" in page, True)
+check('  set by the new-game prompt', 'start: start, seen: []' in page, True)
+check('  and correctable without resetting', "id=\"start-edit\"" in page, True)
+check('crossing it is announced once', "st.seen.push('limit')" in page, True)
+check('  and stepping back arms it again', "k !== 'limit'" in page, True)
+
 print('\nTHE REST OF THE BOARD PAGE')
 check('a marker reads the band at or below it', 'function bandFor' in page, True)
 check('  and shows what is coming', 'function nextBand' in page, True)
