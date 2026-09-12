@@ -88,7 +88,13 @@ function forgetImage(path) {
 // Shrink a photo before it leaves the phone. A modern camera shot is 3-5 MB
 // of detail nobody needs to see the state of a board, and uploading it over a
 // mobile connection is the slow part.
+//
+// 1600px is plenty to recognise a position, and hopeless for reading what is
+// printed on a board: at that size a track number is about five pixels tall.
+// Photos taken to read from get PHOTO_DETAIL_EDGE instead, which is most of
+// what a phone camera gives you and still lands inside the 6 MB upload limit.
 const PHOTO_MAX_EDGE = 1600;
+const PHOTO_DETAIL_EDGE = 3600;
 
 function shrinkImage(file, maxEdge = PHOTO_MAX_EDGE, quality = 0.82) {
     return new Promise(resolve => {
@@ -97,6 +103,9 @@ function shrinkImage(file, maxEdge = PHOTO_MAX_EDGE, quality = 0.82) {
             const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
             // Already small enough: don't re-encode and lose quality for nothing.
             if (scale === 1 && file.size <= 900 * 1024) { resolve(file); return; }
+            // A higher target means the point is legibility, so don't undo it
+            // with aggressive compression.
+            if (maxEdge >= PHOTO_DETAIL_EDGE) quality = Math.max(quality, 0.92);
             const canvas = document.createElement('canvas');
             canvas.width = Math.round(img.width * scale);
             canvas.height = Math.round(img.height * scale);

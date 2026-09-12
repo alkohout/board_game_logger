@@ -136,6 +136,16 @@ api = open('docs/api.js').read()
 check('the log form can take a picture', 'capture="environment"' in page, True)
 check('  shrunk before it is sent', 'function shrinkImage' in api, True)
 check('  because a phone shot is far bigger than needed', 'PHOTO_MAX_EDGE = 1600' in api, True)
+# 1600px is fine for "where was I" and useless for reading a board: a track
+# number comes out about five pixels tall. Reference shots get their own size.
+check('a larger size exists for reading small print',
+      'PHOTO_DETAIL_EDGE = 3600' in api, True)
+check('  and is not then ruined by compression',
+      'quality = Math.max(quality, 0.92)' in api, True)
+check('  offered when logging', 'id="photo-detail"' in page, True)
+check('  and when adding to an existing play', 'id="gi-detail"' in page, True)
+check('a full-detail shot still fits the upload limit',
+      f.PHOTO_MAX_BYTES >= 6 * 1024 * 1024, True)
 check('images are fetched with the token, not a bare src',
       'function apiImageUrl' in api, True)
 check('  and blob urls are released when a photo goes',

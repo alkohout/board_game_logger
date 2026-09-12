@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Board Game Logger</title>
-    <link rel="stylesheet" href="./styles.css?v=34">
+    <link rel="stylesheet" href="./styles.css?v=35">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -248,6 +248,10 @@
          desktop it degrades to an ordinary file picker. -->
     <label>Photo of the table:</label>
     <input type="file" id="photo" accept="image/*" capture="environment">
+    <label style="font-weight:normal; font-size:0.85em; color:#ccc;">
+        <input type="checkbox" id="photo-detail" style="width:auto; margin-right:6px;">
+        Keep full detail — for reading small print off a board
+    </label>
     <div id="photo-preview" class="shot-preview" style="display:none;">
         <img id="photo-thumb" alt="Photo to be attached">
         <div>
@@ -333,6 +337,9 @@
             <div id="gi-addshot" style="margin:8px 0 10px;">
                 <input type="file" id="gi-photo" accept="image/*" capture="environment"
                        style="font-size:0.85em;">
+                <label style="font-weight:normal; font-size:0.8em; color:#aaa;">
+                    <input type="checkbox" id="gi-detail" style="width:auto; margin-right:6px;">
+                    Keep full detail</label>
             </div>
             <div id="gi-edit"></div>
             <button id="gi-save">Save Changes</button>
@@ -439,7 +446,7 @@
 
 <script src="./config.js"></script>
 <script src="./api.js"></script>
-<script src="./tabs.js?v=34"></script>
+<script src="./tabs.js?v=35"></script>
 <script>
 requireAuth();
 
@@ -767,7 +774,8 @@ let pendingPhoto = null;
 document.getElementById('photo').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) { clearPendingPhoto(); return; }
-    pendingPhoto = await shrinkImage(file);
+    const detail = document.getElementById('photo-detail').checked;
+    pendingPhoto = await shrinkImage(file, detail ? PHOTO_DETAIL_EDGE : PHOTO_MAX_EDGE);
     document.getElementById('photo-thumb').src = URL.createObjectURL(pendingPhoto);
     document.getElementById('photo-size').textContent =
         `${Math.round(pendingPhoto.size / 1024)} KB` +
@@ -1110,7 +1118,8 @@ document.getElementById('gi-photo').addEventListener('change', async (e) => {
     status.style.display = '';
     status.className = 'status-ok';
     status.textContent = 'Shrinking photo…';
-    const shrunk = await shrinkImage(file);
+    const shrunk = await shrinkImage(file,
+        document.getElementById('gi-detail')?.checked ? PHOTO_DETAIL_EDGE : PHOTO_MAX_EDGE);
     status.textContent = `Sending ${Math.round(shrunk.size / 1024)} KB…`;
     const up = await uploadPhoto(giPlay.id, shrunk);
     if (up?.success) {
