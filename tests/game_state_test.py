@@ -116,6 +116,34 @@ steps = re.findall(r"\{ at: (\d), text: '[^']+' \},", page.split('rounds: [')[1]
 check('  all six break steps, in order', [int(x) for x in steps], [1, 2, 3, 4, 5, 6])
 check('  with a way back to the printed values', "id='ref-reset'" in page or
       'id="ref-reset"' in page, True)
+print('\nSCORING AREAS, READ OFF THE BOARD')
+# The page hardcodes the mapping, so re-derive it here from the two rules it
+# claims and check it against the board instead of against itself: the blocks
+# must tile appeal 4-113 with no gap or overlap, and each of the ten printed
+# shields must land inside its own block.
+check('the page computes a target number', 'function targetNumber' in page, True)
+check('  and victory points from it', 'function victoryPoints' in page, True)
+check('  two-wide blocks to conservation 10', '114 - 2 * c' in page, True)
+check('  three-wide after that', '94 - 3 * (c - 10)' in page, True)
+
+def area(c):
+    lo = 114 - 2 * c if c <= 10 else 94 - 3 * (c - 10)
+    return lo, lo + (1 if c <= 10 else 2)
+spaces = [a for c in range(1, 41) for a in range(area(c)[0], area(c)[1] + 1)]
+check('  blocks tile appeal 4-113 exactly', sorted(spaces), list(range(4, 114)))
+# Where each shield sat on the photo, as the ticket it was centred over.
+shields = {2: 110.5, 5: 104.5, 8: 98.5, 10: 94.5, 15: 80,
+           20: 65, 25: 50, 30: 35, 35: 20, 40: 5}
+check('  all ten shields land in their own block',
+      [c for c, mid in shields.items() if not area(c)[0] <= mid <= area(c)[1]], [])
+# Rulebook p19: VP is appeal minus the target; p20 makes 0 or better the solo
+# win. Conservation 2 with appeal 110 is the counters exactly meeting.
+check('  meeting the counters is 0 VP', 110 - area(2)[0], 0)
+check('  and conservation 20 meets at appeal 64', 64 - area(20)[0], 0)
+check('the solo win is 0 VP, not a final round', 'solo game is won' in page, True)
+check('  and a new game asks where appeal starts', 'Starting appeal?' in page, True)
+
+print('\nTHE REST OF THE BOARD PAGE')
 check('a marker reads the band at or below it', 'function bandFor' in page, True)
 check('  and shows what is coming', 'function nextBand' in page, True)
 check('a milestone announces once', 'st.seen.includes' in page, True)

@@ -207,6 +207,25 @@
         let ref = JSON.parse(JSON.stringify(BLANK_REF));
         let saveTimer = null;
 
+        // Appeal and conservation run in opposite directions around the same
+        // ring, so the counters approach each other and "equal" means nothing.
+        // A scoring area is one conservation space plus the appeal spaces
+        // beside it; read off the board photo, conservation 1-10 sit on
+        // two-wide blocks and 11-40 on three-wide ones, which tiles appeal
+        // 4-113 exactly and puts all ten printed shields dead centre of their
+        // own block. Your target number is the lowest appeal in the area your
+        // conservation counter is in.
+        function targetNumber(conservation) {
+            const c = Math.max(0, Math.min(40, conservation));
+            if (c === 0) return 114;               // past appeal 113, unreachable
+            return c <= 10 ? 114 - 2 * c : 94 - 3 * (c - 10);
+        }
+        // Rulebook p19: victory points are your appeal minus that target, and
+        // p20 makes 0 or better the solo win. Same number either way.
+        function victoryPoints() {
+            return st.appeal - targetNumber(st.conservation);
+        }
+
         function announce(text, warn) {
             const div = document.createElement('div');
             div.className = 'alert' + (warn ? ' warn' : '');
@@ -245,9 +264,11 @@
                     if (live && r.text) announce(`Reputation ${r.at} — ${r.text}`);
                 }
             });
-            if (st.conservation >= st.appeal && st.appeal > 0 && !st.seen.includes('met')) {
+            if (victoryPoints() >= 0 && !st.seen.includes('met')) {
                 st.seen.push('met');
-                if (live) announce('Markers have met — this is the final round.', true);
+                // Solo runs its six breaks out either way, so this is the win
+                // condition rather than a signal to stop playing.
+                if (live) announce('Counters have met — 0 VP or better, so the solo game is won from here.', true);
             }
         }
 
@@ -280,10 +301,14 @@
         }
 
         function render() {
-            const gap = st.appeal - st.conservation;
-            const met = st.conservation >= st.appeal && st.appeal > 0;
-            const closed = st.appeal > 0
-                ? Math.max(0, Math.min(100, (st.conservation / st.appeal) * 100)) : 0;
+            const vp = victoryPoints();
+            const target = targetNumber(st.conservation);
+            const won = vp >= 0;
+            // How far the appeal counter has come towards the target, so the
+            // bar fills as the counters close rather than tracking a number
+            // that never meant anything.
+            const closed = target > 0
+                ? Math.max(0, Math.min(100, (st.appeal / target) * 100)) : 100;
 
             const roundList = (ref.rounds || []).filter(r => r.text).length
                 ? `<div class="track"><div class="track-head"><span>At each break</span></div>
@@ -298,9 +323,12 @@
                 stepper('appeal', 'Appeal', 'appeal', true) +
                 stepper('conservation', 'Conservation', 'conservation', false) +
                 `<div class="track">
-                    <div class="track-head"><span>Markers</span>
-                        <span class="track-note ${met ? 'gap-met' : gap <= 5 ? 'gap-close' : ''}">${
-                            met ? 'met — final round' : `${gap} apart`}</span></div>
+                    <div class="track-head"><span>Victory points</span>
+                        <span class="track-note ${won ? 'gap-met' : vp >= -5 ? 'gap-close' : ''}">${
+                            won ? `${vp} VP — winning` : `${vp} VP — ${-vp} appeal short`}</span></div>
+                    <div class="track-note" style="margin:2px 0 4px;">Target ${target}:
+                        the lowest appeal in the area your conservation counter is in.
+                        Solo is won at 0 or better.</div>
                     <div class="gap-bar"><div class="gap-fill" style="width:${closed.toFixed(1)}%"></div></div>
                  </div>` +
                 stepper('reputation', 'Reputation', 'reputation', false) +
@@ -332,7 +360,7 @@
                 const value = m[1] === 'cons' ? st.conservation : st.reputation;
                 return value >= +m[2];
             });
-            if (st.conservation < st.appeal) st.seen = st.seen.filter(k => k !== 'met');
+            if (victoryPoints() < 0) st.seen = st.seen.filter(k => k !== 'met');
             checkMilestones(true);
             render();
             save();
@@ -405,8 +433,19 @@
         });
 
         document.getElementById('reset').addEventListener('click', async () => {
-            if (!confirm('Start a new game? The markers reset; the board reference is kept.')) return;
-            st = { ...BLANK, seen: [] };
+            // Solo sets its difficulty by where appeal starts — 20 is the
+            // rulebook's beginner setting, 10 and 0 are the harder ones, and
+            // it is the same number the log records. Asking beats stepping up
+            // from zero twenty times.
+            const typed = prompt('New game. Starting appeal?\n\n' +
+                '20 is the rulebook\'s beginner setting for solo; 10 and 0 are harder.', '20');
+            if (typed === null) return;
+            const start = parseInt(typed, 10);
+            if (!Number.isFinite(start) || start < 0 || start > 113) {
+                alert('That is not an appeal between 0 and 113 — nothing was reset.');
+                return;
+            }
+            st = { ...BLANK, appeal: start, seen: [] };
             document.getElementById('alerts').innerHTML = '';
             render();
             await apiPost('/api/game_state/ark_nova', { state: st });
