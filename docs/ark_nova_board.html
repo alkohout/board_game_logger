@@ -105,10 +105,10 @@
         <details class="ref" id="ref-panel">
             <summary>What's printed on the board — fill in once</summary>
             <p style="color:#888; font-size:0.85em;">
-                These numbers are on the board itself and aren't in the rulebook.
-                They're filled in from the board photo on your 2026-09-12 log;
-                edit anything that's wrong and save. Starting a new game doesn't
-                clear them.</p>
+                The appeal and reputation tracks are read off the board photo on
+                your 2026-09-12 log; the conservation milestones and the break
+                steps are the rulebook's wording. Edit anything that's wrong and
+                save. Starting a new game doesn't clear them.</p>
             <div id="ref-editor"></div>
             <button id="ref-save">Save reference</button>
             <button id="ref-reset" class="btn-red">Reload the printed values</button>
@@ -151,17 +151,16 @@
                 { at: 81, text: '32' }, { at: 86, text: '33' }, { at: 91, text: '34' },
                 { at: 96, text: '35' }, { at: 102, text: '36' }, { at: 108, text: '37' },
             ],
-            // The shields are all on the board; only the first four carry
-            // printed rewards, and at 5, 8 and 10 the photo shows the spaces
-            // after the tiles were taken. Those read "check the board" rather
-            // than a guess at what was on them.
+            // Rulebook p18: four spaces on the conservation track, and only
+            // four, give a one-time effect when you reach or pass them. The
+            // shields further round the board are scoring positions, so they
+            // get no row — a blank row would announce an empty milestone and
+            // then hide the last real one.
             conservation: [
-                { at: 2,  text: 'Two bonus tiles: upgrade an action card to II, and +1 worker' },
-                { at: 5,  text: 'Two bonus tiles + a 5 token — tiles already taken in the photo, check the board' },
-                { at: 8,  text: 'Two bonus tiles + a 5 token — tiles already taken in the photo, check the board' },
-                { at: 10, text: 'Removes a break tile (red hourglass) — check the board' },
-                { at: 15, text: '' }, { at: 20, text: '' }, { at: 25, text: '' },
-                { at: 30, text: '' }, { at: 35, text: '' }, { at: 40, text: '' },
+                { at: 2,  text: 'Either upgrade an action card (flip to II) or activate an extra association worker' },
+                { at: 5,  text: 'Take 5 money, or one of the bonus tokens beside the space (a taken token leaves the game; 5 money always stays)' },
+                { at: 8,  text: 'Take 5 money, or one of the bonus tokens beside the space (a taken token leaves the game; 5 money always stays)' },
+                { at: 10, text: 'First to 10: every player discards one of their two Final Scoring cards, keeping the other' },
             ],
             // Each reputation space sits above the display slot it opens, so
             // the threshold is the first space over that slot. The bonuses sit
@@ -181,11 +180,17 @@
                 { at: 14, text: 'Bonus: +1 conservation point' },
                 { at: 15, text: 'Bonus: an X-token' },
             ],
-            // The board prints a six-step break sequence in icons only. They
-            // are legible but not unambiguous, and a play aid that gets the
-            // order of a break wrong is worse than no play aid, so this is
-            // left for you to write in from the rulebook.
-            rounds: [{ at: 1, text: '' }],
+            // Ark Nova has no rounds — it has breaks, and the board prints
+            // this sequence in icons only. The wording is the rulebook's
+            // (p18-19), since the icons alone were not worth guessing at.
+            rounds: [
+                { at: 1, text: 'Hand limit: discard down to 3 cards (5 with the university that raises it)' },
+                { at: 2, text: 'Return multiplier, venom and constriction tokens from your action cards' },
+                { at: 3, text: 'Take your association workers back, and top the partner zoos and universities back up to one of each' },
+                { at: 4, text: 'Discard display folders 1 and 2, slide the rest down, refill' },
+                { at: 5, text: 'Income: money for your appeal, then 1 per building beside each kiosk, then any income icons' },
+                { at: 6, text: 'Break token back to its starting space for the player count' },
+            ],
         };
         const REF_SECTIONS = [
             { key: 'appeal', title: 'Appeal → income',
@@ -194,8 +199,8 @@
               atLabel: 'At', textLabel: 'What you get' },
             { key: 'reputation', title: 'Reputation track',
               atLabel: 'At', textLabel: 'Bonus, and which cards you may take' },
-            { key: 'rounds', title: 'Round reminders',
-              atLabel: 'Round', textLabel: 'What happens this round' },
+            { key: 'rounds', title: 'Break steps',
+              atLabel: 'Step', textLabel: 'What happens, in order' },
         ];
 
         let st = { ...BLANK };
@@ -281,7 +286,7 @@
                 ? Math.max(0, Math.min(100, (st.conservation / st.appeal) * 100)) : 0;
 
             const roundList = (ref.rounds || []).filter(r => r.text).length
-                ? `<div class="track"><div class="track-head"><span>Each round</span></div>
+                ? `<div class="track"><div class="track-head"><span>At each break</span></div>
                      <ul class="rounds" style="margin:0; padding-left:16px;">${
                         (ref.rounds || []).filter(r => r.text)
                           .sort((a, b) => +a.at - +b.at)

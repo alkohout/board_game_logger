@@ -90,8 +90,11 @@ print('\nTHE BOARD PAGE TRACKS ONLY THE THREE MARKERS')
 page = open('docs/ark_nova_board.html').read()
 check('appeal, conservation and reputation', 
       all(f"stepper('{x}'" in page for x in ('appeal', 'conservation', 'reputation')), True)
-for gone in ('breaks', 'botAppeal', 'st.workers', 'data-worker'):
+# 'breaks' on its own now appears in the break-step wording, so these name
+# the state and controls that would mean the page was tracking them.
+for gone in ('st.breaks', 'botAppeal', 'st.workers', 'data-worker'):
     check(f'  no {gone}', gone in page, False)
+check('  and no stepper for the break track', "stepper('breaks'" in page, False)
 
 print('\nTHE BOARD REFERENCE IS COPIED, NOT GUESSED')
 check('there is an editor for it', 'ref-editor' in page, True)
@@ -107,8 +110,10 @@ check('  income bands run 5 to 37', [t for _, t in bands], list(range(5, 38)))
 check('  covering appeal 0 to 113 exactly',
       sum((bands[i + 1][0] - 1 if i + 1 < len(bands) else 113) - a + 1
           for i, (a, _) in enumerate(bands)), 114)
-check('  and the round reminders left blank, being icons on the board',
-      "rounds: [{ at: 1, text: '' }]" in page, True)
+# The break steps are the rulebook's, not the board icons', so what matters
+# is that all six are there and numbered in order.
+steps = re.findall(r"\{ at: (\d), text: '[^']+' \},", page.split('rounds: [')[1].split('],')[0])
+check('  all six break steps, in order', [int(x) for x in steps], [1, 2, 3, 4, 5, 6])
 check('  with a way back to the printed values', "id='ref-reset'" in page or
       'id="ref-reset"' in page, True)
 check('a marker reads the band at or below it', 'function bandFor' in page, True)
