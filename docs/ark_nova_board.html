@@ -183,13 +183,17 @@
             // Ark Nova has no rounds — it has breaks, and the board prints
             // this sequence in icons only. The wording is the rulebook's
             // (p18-19), since the icons alone were not worth guessing at.
+            // Solo order: the token onto the Association board happens at the
+            // start of the break (p20), and the break-token reset that the
+            // board prints as step 6 does not happen at all, there being no
+            // break token. So the rulebook's 1-5 sit here as 2-6.
             rounds: [
-                { at: 1, text: 'Hand limit: discard down to 3 cards (5 with the university that raises it)' },
-                { at: 2, text: 'Return multiplier, venom and constriction tokens from your action cards' },
-                { at: 3, text: 'Take your association workers back, and top the partner zoos and universities back up to one of each' },
-                { at: 4, text: 'Discard display folders 1 and 2, slide the rest down, refill' },
-                { at: 5, text: 'Income: money for your appeal, then 1 per building beside each kiosk, then any income icons' },
-                { at: 6, text: 'Solo: top token onto the lowest open donation space on the Association board (if only 12 is left open, place it beside 12), then the rest back to the left column' },
+                { at: 1, text: 'Solo: top token onto the lowest open donation space on the Association board (if only 12 is left open, place it beside 12), then the rest back to the left column' },
+                { at: 2, text: 'Hand limit: discard down to 3 cards (5 with the university that raises it)' },
+                { at: 3, text: 'Return multiplier, venom and constriction tokens from your action cards' },
+                { at: 4, text: 'Take your association workers back, and top the partner zoos and universities back up to one of each' },
+                { at: 5, text: 'Discard display folders 1 and 2, slide the rest down, refill' },
+                { at: 6, text: 'Income: money for your appeal, then 1 per building beside each kiosk, then any income icons' },
             ],
         };
         const REF_SECTIONS = [
