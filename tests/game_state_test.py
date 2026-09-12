@@ -85,17 +85,36 @@ c.delete(f'/api/users/{other}', headers=H)
 k.execute("SELECT count(*) FROM game_state WHERE user_id=%s", (other,))
 check('deleting the account clears its saved games', k.fetchone()[0], 0)
 
-print('\nTHE PAGE')
+print('\nTHE BOARD PAGE TRACKS ONLY THE THREE MARKERS')
 page = open('docs/ark_nova_board.html').read()
-check('conservation milestones are the verified ones',
-      'CONSERVATION_MILESTONES = [2, 5, 8, 10]' in page, True)
-check('break fires at 15', 'BREAK_AT = 15' in page, True)
-check('  reputation thresholds are not invented',
-      'REPUTATION_MILESTONES' in page, False)
-check('a milestone announces once, not on every redraw', 'st.seen.includes' in page, True)
-check('  and resuming does not replay old ones', 'checkMilestones(null)' in page, True)
+check('appeal, conservation and reputation', 
+      all(f"stepper('{x}'" in page for x in ('appeal', 'conservation', 'reputation')), True)
+for gone in ('breaks', 'botAppeal', 'st.workers', 'data-worker'):
+    check(f'  no {gone}', gone in page, False)
+
+print('\nTHE BOARD REFERENCE IS COPIED, NOT GUESSED')
+check('there is an editor for it', 'ref-editor' in page, True)
+check('  covering all four tables',
+      all(f"key: '{x}'" in page for x in ('appeal', 'conservation', 'reputation', 'rounds')), True)
+check('  seeded only with what the rulebook states', "at: 7, text: '11'" in page, True)
+check('  and nothing invented for reputation',
+      "reputation: [{ at: 1, text: '' }]" in page, True)
+check('a marker reads the band at or below it', 'function bandFor' in page, True)
+check('  and shows what is coming', 'function nextBand' in page, True)
+check('a milestone announces once', 'st.seen.includes' in page, True)
+check('  resuming does not replay old ones', 'checkMilestones(false)' in page, True)
+check('  but stepping back down arms it again', 'st.seen.filter' in page, True)
 check('saves are debounced', 'saveTimer' in page, True)
-check('the marker gap is the headline', 'gap-bar' in page, True)
+
+print('\nA NEW GAME KEEPS THE REFERENCE')
+check('they are separate keys', "'/api/game_state/ark_nova_ref'" in page, True)
+c.post('/api/game_state/zzref', headers=H, json={'state': {'appeal': [{'at': 7, 'text': '11'}]}})
+c.post('/api/game_state/zzgame', headers=H, json={'state': {'appeal': 40}})
+c.post('/api/game_state/zzgame', headers=H, json={'state': {'appeal': 0}})   # new game
+check('resetting the game leaves the reference alone',
+      c.get('/api/game_state/zzref', headers=H).get_json()['state']['appeal'][0]['text'], '11')
+k.execute("DELETE FROM game_state WHERE game_key IN ('zzref','zzgame')")
+su.commit()
 
 k.execute("DELETE FROM game_state WHERE game_key LIKE 'zz%'")
 k.execute("DELETE FROM users WHERE email LIKE 'zz-gs%'")

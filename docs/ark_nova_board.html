@@ -4,16 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ark Nova Board</title>
-    <link rel="stylesheet" href="./styles.css?v=33">
+    <link rel="stylesheet" href="./styles.css?v=34">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
-        /* Built to be used one-handed at the table, so targets are large and
-           16px text stops iOS zooming when anything gets focus. */
-        .board { display: grid; gap: 10px; }
+        /* Used one-handed at the table: big targets, 16px inputs so iOS
+           doesn't zoom when anything takes focus. */
         .track {
             border: 1px solid rgba(255,255,255,0.15); border-radius: 8px;
-            padding: 10px 12px; background: rgba(255,255,255,0.03);
+            padding: 10px 12px; margin-bottom: 10px; background: rgba(255,255,255,0.03);
         }
         .track-head {
             display: flex; justify-content: space-between; align-items: baseline;
@@ -21,55 +20,38 @@
             color: #FFD54F; margin-bottom: 6px;
         }
         .track-note { color: #888; font-size: 0.9em; text-transform: none; letter-spacing: 0; }
-        .stepper { display: flex; align-items: center; gap: 10px; }
+        .stepper { display: flex; align-items: center; gap: 8px; }
         .stepper button {
-            width: 52px; height: 52px; font-size: 1.4em; margin: 0; padding: 0;
+            width: 50px; height: 50px; font-size: 1.4em; margin: 0; padding: 0;
             border-radius: 8px; flex: none;
         }
+        .stepper .step10 { width: 40px; height: 40px; font-size: 0.85em; opacity: 0.7; }
         .stepper .val {
             flex: 1; text-align: center; font-size: 2em; font-weight: bold;
             font-variant-numeric: tabular-nums;
         }
-        .stepper .step10 { width: 44px; height: 44px; font-size: 0.9em; opacity: 0.75; }
         .appeal .val { color: #FF8A65; }
         .conservation .val { color: #90EE90; }
+        .reputation .val { color: #90CAF9; }
 
-        /* The gap between the two markers is the game's clock, so it gets a bar
-           rather than a number to squint at. */
+        /* What this marker currently earns you — the reason the board is here. */
+        .payoff {
+            margin-top: 8px; padding: 8px 10px; border-radius: 6px;
+            background: rgba(255,213,79,0.08); border-left: 3px solid #FFD54F;
+            font-size: 0.9em;
+        }
+        .payoff strong { color: #FFD54F; }
+        .payoff .none { color: #888; font-style: italic; }
+        .upcoming { color: #aaa; font-size: 0.85em; margin-top: 4px; display: block; }
+
         .gap-bar { height: 10px; border-radius: 5px; background: rgba(255,255,255,0.1);
                    overflow: hidden; margin: 8px 0 4px; }
         .gap-fill { height: 100%; background: linear-gradient(90deg,#90EE90,#FFD54F); }
-        .gap-text { font-size: 0.85em; color: #ccc; }
-        .gap-close { color: #FFD54F; font-weight: bold; }
         .gap-met { color: #90EE90; font-weight: bold; }
+        .gap-close { color: #FFD54F; font-weight: bold; }
 
-        .small-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-        .small-grid .stepper button { width: 44px; height: 44px; font-size: 1.2em; }
-        .small-grid .val { font-size: 1.5em; }
-
-        /* Association workers: tap a space to put a worker on it. */
-        .workers { display: flex; flex-wrap: wrap; gap: 6px; }
-        .worker {
-            flex: 1 1 30%; min-width: 96px; padding: 10px 6px; text-align: center;
-            border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
-            font-size: 0.85em; cursor: pointer; user-select: none;
-            background: rgba(255,255,255,0.03);
-        }
-        .worker.used { background: rgba(255,213,79,0.22); border-color: #FFD54F; color: #FFD54F; }
-
-        .milestones { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-        .ms {
-            font-size: 0.78em; padding: 3px 9px; border-radius: 10px;
-            border: 1px solid rgba(255,255,255,0.18); color: #888;
-        }
-        .ms.hit { background: rgba(144,238,144,0.18); border-color: #90EE90; color: #90EE90; }
-        .ms.next { border-color: #FFD54F; color: #FFD54F; }
-
-        /* What's coming, from the numbers — not from card text. */
-        .ahead { margin: 0; padding: 10px 12px; border-left: 3px solid #FFD54F;
-                 background: rgba(255,213,79,0.07); font-size: 0.9em; }
-        .ahead ul { margin: 4px 0 0; padding-left: 18px; }
-        .ahead li { margin: 2px 0; }
+        .rounds li { margin: 3px 0; font-size: 0.9em; }
+        .rounds .rnum { color: #FFD54F; font-weight: bold; margin-right: 6px; }
 
         #alerts { position: sticky; top: 0; z-index: 5; }
         .alert {
@@ -78,6 +60,27 @@
         }
         .alert.warn { background: #7a5c00; }
         .saved { color: #888; font-size: 0.78em; text-align: right; }
+
+        /* The reference you copy off the board once. */
+        .ref-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+        .ref-table th {
+            font-size: 0.72em; color: #aaa; font-weight: normal; text-align: left;
+            padding: 0 4px 3px;
+        }
+        .ref-table td { padding: 2px 4px; }
+        .ref-table input { margin: 0; padding: 6px; width: 100%; font-size: 16px; }
+        .ref-table td.at { width: 74px; }
+        .ref-row-del {
+            background: none; color: #c98; padding: 0 6px; margin: 0;
+            font-size: 1.1em; line-height: 1; cursor: pointer;
+        }
+        .ref-row-del:hover { background: none; color: #ff6b6b; }
+        .ref-empty { color: #888; font-size: 0.85em; margin: 4px 0 8px; }
+        details.ref { margin-top: 14px; }
+        details.ref > summary {
+            cursor: pointer; color: #FFD54F; font-size: 0.85em;
+            text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 0;
+        }
     </style>
 </head>
 <body>
@@ -89,22 +92,34 @@
 
     <div class="form-container">
         <h2>Ark Nova — the big board</h2>
-        <p style="color:#ccc; font-size:0.9em; margin:0 0 4px;">
+        <p style="color:#ccc; font-size:0.9em; margin:0 0 8px;">
             Stands in for the shared board so it can stay in the box. Keep your
             zoo map, the conservation board and the cards on the table.</p>
         <div id="alerts"></div>
-        <div class="board" id="board"><p style="color:#aaa;">Loading…</p></div>
+        <div id="board"><p style="color:#aaa;">Loading…</p></div>
         <p class="saved" id="saved"></p>
-        <nav style="margin-top:12px;">
+        <nav style="margin-top:10px;">
             <button class="btn-red" id="reset">Start a new game</button>
         </nav>
+
+        <details class="ref" id="ref-panel">
+            <summary>What's printed on the board — fill in once</summary>
+            <p style="color:#888; font-size:0.85em;">
+                These numbers are on the board itself and aren't in the rulebook,
+                so rather than guess at them they're yours to copy across. Do it
+                once and every game after reads from them. Starting a new game
+                doesn't clear them.</p>
+            <div id="ref-editor"></div>
+            <button id="ref-save">Save reference</button>
+            <span id="ref-saved" class="saved"></span>
+        </details>
     </div>
 
     <footer>Background image: © Ryan Laukat / Red Raven Games — used with appreciation.</footer>
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=33"></script>
+    <script src="./tabs.js?v=34"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -112,148 +127,162 @@
         const esc = s => String(s ?? '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-        // Verified against the rules: conservation pays out at 2, 5, 8 and 10,
-        // and the break fires when the break track reaches 15. Reputation's
-        // bonus spaces are deliberately absent — I couldn't confirm them, and a
-        // made-up threshold that fires at the wrong moment is worse than none.
-        const CONSERVATION_MILESTONES = [2, 5, 8, 10];
-        const BREAK_AT = 15;
+        // Markers only. Money, X-tokens, workers and the break track live on
+        // components still on the table, so tracking them here would be a
+        // second place to get them wrong.
+        const BLANK = { appeal: 0, conservation: 0, reputation: 1, seen: [] };
 
-        const BLANK = {
-            appeal: 0, conservation: 0, reputation: 0, money: 25, x: 0,
-            breaks: 0, round: 1, botAppeal: 0,
-            workers: [false, false, false, false, false],
-            seen: [],            // milestones already announced
-            started: null,
+        // Everything printed on the board. Seeded with the one value the
+        // rulebook actually states — appeal 7 pays 11 — and the conservation
+        // milestones it names. The rest is blank rather than invented.
+        const BLANK_REF = {
+            appeal: [{ at: 0, text: '' }, { at: 7, text: '11' }],
+            conservation: [{ at: 2, text: '' }, { at: 5, text: '' },
+                           { at: 8, text: '' }, { at: 10, text: '' }],
+            reputation: [{ at: 1, text: '' }],
+            rounds: [{ at: 1, text: '' }],
         };
-        const WORKER_SPACES = ['Reputation', 'Partner zoo', 'University',
-                               'Conservation', 'Association'];
+        const REF_SECTIONS = [
+            { key: 'appeal', title: 'Appeal → income',
+              atLabel: 'Appeal', textLabel: 'Money you take at this appeal or above' },
+            { key: 'conservation', title: 'Conservation milestones',
+              atLabel: 'At', textLabel: 'What you get' },
+            { key: 'reputation', title: 'Reputation track',
+              atLabel: 'At', textLabel: 'Bonus, and which cards you may take' },
+            { key: 'rounds', title: 'Round reminders',
+              atLabel: 'Round', textLabel: 'What happens this round' },
+        ];
 
         let st = { ...BLANK };
+        let ref = JSON.parse(JSON.stringify(BLANK_REF));
         let saveTimer = null;
 
         function announce(text, warn) {
-            const box = document.getElementById('alerts');
             const div = document.createElement('div');
             div.className = 'alert' + (warn ? ' warn' : '');
             div.textContent = text;
             div.addEventListener('click', () => div.remove());
-            box.appendChild(div);
+            document.getElementById('alerts').appendChild(div);
         }
 
-        // Fires once per threshold. Without the seen list every redraw would
-        // re-announce everything already passed, which is noise not news.
-        function checkMilestones(before) {
-            CONSERVATION_MILESTONES.forEach(m => {
-                const key = 'cons' + m;
-                if (st.conservation >= m && !st.seen.includes(key)) {
+        // The highest entry at or below the marker — how a track printed in
+        // bands works: you get what the last threshold you passed says.
+        function bandFor(rows, value) {
+            const hits = (rows || []).filter(r => Number.isFinite(+r.at) && +r.at <= value);
+            if (!hits.length) return null;
+            return hits.reduce((a, b) => (+b.at >= +a.at ? b : a));
+        }
+        function nextBand(rows, value) {
+            const ahead = (rows || []).filter(r => Number.isFinite(+r.at) && +r.at > value);
+            if (!ahead.length) return null;
+            return ahead.reduce((a, b) => (+b.at < +a.at ? b : a));
+        }
+
+        // Announces once per threshold; the seen list is what stops a redraw —
+        // or resuming a three-day-old game — replaying everything already past.
+        function checkMilestones(live) {
+            (ref.conservation || []).forEach(r => {
+                const key = 'cons' + r.at;
+                if (st.conservation >= +r.at && !st.seen.includes(key)) {
                     st.seen.push(key);
-                    if (before !== null) announce(`Conservation ${m} reached — take the bonus.`);
+                    if (live) announce(`Conservation ${r.at} — ${r.text || 'take the bonus shown on the board'}`);
                 }
             });
-            if (st.breaks >= BREAK_AT && !st.seen.includes('break' + st.round)) {
-                st.seen.push('break' + st.round);
-                if (before !== null) announce(`Break! Take an X-token, then reset the break track.`, true);
-            }
-            const met = st.conservation >= st.appeal && st.appeal > 0;
-            if (met && !st.seen.includes('met')) {
+            (ref.reputation || []).forEach(r => {
+                const key = 'rep' + r.at;
+                if (st.reputation >= +r.at && !st.seen.includes(key)) {
+                    st.seen.push(key);
+                    if (live && r.text) announce(`Reputation ${r.at} — ${r.text}`);
+                }
+            });
+            if (st.conservation >= st.appeal && st.appeal > 0 && !st.seen.includes('met')) {
                 st.seen.push('met');
-                if (before !== null) announce('Markers have met — this is the final round.', true);
+                if (live) announce('Markers have met — this is the final round.', true);
             }
         }
 
-        function stepper(field, label, note, cls, min, big) {
-            const v = st[field];
-            return `<div class="track ${cls || ''}">
+        function stepper(field, label, cls, big) {
+            return `<div class="track ${cls}">
                 <div class="track-head"><span>${esc(label)}</span>
-                    <span class="track-note">${note || ''}</span></div>
+                    <span class="track-note" id="note-${field}"></span></div>
                 <div class="stepper">
                     <button data-dec="${field}" aria-label="${esc(label)} down">−</button>
                     ${big ? `<button class="step10" data-dec10="${field}">−10</button>` : ''}
-                    <span class="val">${v}</span>
+                    <span class="val">${st[field]}</span>
                     ${big ? `<button class="step10" data-inc10="${field}">+10</button>` : ''}
                     <button data-inc="${field}" aria-label="${esc(label)} up">+</button>
                 </div>
+                <div class="payoff" id="pay-${field}"></div>
             </div>`;
+        }
+
+        function payoffHtml(rows, value, label, blankHint) {
+            const now = bandFor(rows, value);
+            const next = nextBand(rows, value);
+            const body = now && now.text
+                ? `<strong>${esc(now.text)}</strong>`
+                : `<span class="none">${esc(blankHint)}</span>`;
+            const ahead = next
+                ? `<span class="upcoming">Next at ${esc(next.at)}${
+                    next.text ? ` — ${esc(next.text)}` : ''} (${+next.at - value} away)</span>`
+                : '';
+            return `${label}: ${body}${ahead}`;
         }
 
         function render() {
             const gap = st.appeal - st.conservation;
             const met = st.conservation >= st.appeal && st.appeal > 0;
-            // The bar shows how far conservation has closed on appeal, which is
-            // the actual clock in a solo game.
             const closed = st.appeal > 0
                 ? Math.max(0, Math.min(100, (st.conservation / st.appeal) * 100)) : 0;
 
-            const msPills = CONSERVATION_MILESTONES.map(m => {
-                const hit = st.conservation >= m;
-                const next = !hit && CONSERVATION_MILESTONES.filter(x => x > st.conservation)[0] === m;
-                return `<span class="ms${hit ? ' hit' : next ? ' next' : ''}">${m}</span>`;
-            }).join('');
-
-            const nextMs = CONSERVATION_MILESTONES.find(m => m > st.conservation);
-            const ahead = [];
-            if (met) ahead.push('<strong>Markers have met — final round.</strong>');
-            else ahead.push(`Conservation needs <strong>${gap}</strong> more to reach appeal.`);
-            if (nextMs) ahead.push(`Next conservation bonus at <strong>${nextMs}</strong> — ${nextMs - st.conservation} away.`);
-            ahead.push(`Break track <strong>${st.breaks}</strong> of ${BREAK_AT}` +
-                       (st.breaks >= BREAK_AT ? ' — break due.' : ` — ${BREAK_AT - st.breaks} to go.`));
-            if (st.botAppeal) {
-                const d = st.appeal - st.botAppeal;
-                ahead.push(`Bot appeal <strong>${st.botAppeal}</strong> — you are ${
-                    d === 0 ? 'level' : d > 0 ? `${d} ahead` : `${-d} behind`}.`);
-            }
+            const roundList = (ref.rounds || []).filter(r => r.text).length
+                ? `<div class="track"><div class="track-head"><span>Each round</span></div>
+                     <ul class="rounds" style="margin:0; padding-left:16px;">${
+                        (ref.rounds || []).filter(r => r.text)
+                          .sort((a, b) => +a.at - +b.at)
+                          .map(r => `<li><span class="rnum">${esc(r.at)}</span>${esc(r.text)}</li>`)
+                          .join('')}</ul></div>`
+                : '';
 
             document.getElementById('board').innerHTML =
-                stepper('appeal', 'Appeal', '', 'appeal', 0, true) +
-                stepper('conservation', 'Conservation', '', 'conservation', 0, false) +
+                stepper('appeal', 'Appeal', 'appeal', true) +
+                stepper('conservation', 'Conservation', 'conservation', false) +
                 `<div class="track">
                     <div class="track-head"><span>Markers</span>
                         <span class="track-note ${met ? 'gap-met' : gap <= 5 ? 'gap-close' : ''}">${
                             met ? 'met — final round' : `${gap} apart`}</span></div>
                     <div class="gap-bar"><div class="gap-fill" style="width:${closed.toFixed(1)}%"></div></div>
-                    <div class="gap-text">Conservation milestones ${msPills}</div>
-                </div>` +
-                `<div class="small-grid">
-                    ${stepper('breaks', 'Break track', `of ${BREAK_AT}`)}
-                    ${stepper('reputation', 'Reputation', '')}
-                    ${stepper('money', 'Money', '')}
-                    ${stepper('x', 'X-tokens', '')}
-                    ${stepper('round', 'Round', '')}
-                    ${stepper('botAppeal', 'Bot appeal', '')}
-                </div>` +
-                `<div class="track">
-                    <div class="track-head"><span>Association workers</span>
-                        <span class="track-note">${st.workers.filter(Boolean).length} placed</span></div>
-                    <div class="workers">${WORKER_SPACES.map((w, i) =>
-                        `<div class="worker${st.workers[i] ? ' used' : ''}" data-worker="${i}">${esc(w)}</div>`
-                    ).join('')}</div>
-                </div>` +
-                `<p class="ahead"><strong>Where this stands</strong><ul>${
-                    ahead.map(a => `<li>${a}</li>`).join('')}</ul></p>`;
+                 </div>` +
+                stepper('reputation', 'Reputation', 'reputation', false) +
+                roundList;
 
-            document.querySelectorAll('[data-inc]').forEach(b =>
-                b.onclick = () => bump(b.dataset.inc, 1));
-            document.querySelectorAll('[data-dec]').forEach(b =>
-                b.onclick = () => bump(b.dataset.dec, -1));
-            document.querySelectorAll('[data-inc10]').forEach(b =>
-                b.onclick = () => bump(b.dataset.inc10, 10));
-            document.querySelectorAll('[data-dec10]').forEach(b =>
-                b.onclick = () => bump(b.dataset.dec10, -10));
-            document.querySelectorAll('[data-worker]').forEach(w =>
-                w.onclick = () => {
-                    st.workers[+w.dataset.worker] = !st.workers[+w.dataset.worker];
-                    render(); save();
-                });
+            document.getElementById('pay-appeal').innerHTML =
+                payoffHtml(ref.appeal, st.appeal, 'Income',
+                           'fill in the appeal payouts below');
+            document.getElementById('pay-conservation').innerHTML =
+                payoffHtml(ref.conservation, st.conservation, 'Last milestone',
+                           'no milestone reached yet');
+            document.getElementById('pay-reputation').innerHTML =
+                payoffHtml(ref.reputation, st.reputation, 'At this reputation',
+                           'fill in the reputation track below');
+
+            document.querySelectorAll('[data-inc]').forEach(b => b.onclick = () => bump(b.dataset.inc, 1));
+            document.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => bump(b.dataset.dec, -1));
+            document.querySelectorAll('[data-inc10]').forEach(b => b.onclick = () => bump(b.dataset.inc10, 10));
+            document.querySelectorAll('[data-dec10]').forEach(b => b.onclick = () => bump(b.dataset.dec10, -10));
         }
 
         function bump(field, by) {
             st[field] = Math.max(0, (st[field] || 0) + by);
-            // Resetting the break track past a break clears the flag so the
-            // next one announces itself too.
-            if (field === 'breaks' && st.breaks < BREAK_AT) {
-                st.seen = st.seen.filter(k => !k.startsWith('break'));
-            }
+            // Coming back down past a threshold arms it again, so undoing a
+            // misclick doesn't permanently silence that milestone.
+            st.seen = st.seen.filter(key => {
+                const m = key.match(/^(cons|rep)(\d+)$/);
+                if (!m) return true;
+                const value = m[1] === 'cons' ? st.conservation : st.reputation;
+                return value >= +m[2];
+            });
+            if (st.conservation < st.appeal) st.seen = st.seen.filter(k => k !== 'met');
             checkMilestones(true);
             render();
             save();
@@ -261,7 +290,6 @@
 
         function save() {
             clearTimeout(saveTimer);
-            // Debounced: tapping + five times shouldn't be five round trips.
             saveTimer = setTimeout(async () => {
                 const res = await apiPost('/api/game_state/ark_nova', { state: st });
                 document.getElementById('saved').textContent = res?.success
@@ -270,10 +298,54 @@
             }, 600);
         }
 
+        // ---- the reference editor ------------------------------------------
+        function renderRef() {
+            document.getElementById('ref-editor').innerHTML = REF_SECTIONS.map(sec => {
+                const rows = (ref[sec.key] || []).map((r, i) => `
+                    <tr>
+                        <td class="at"><input type="number" value="${esc(r.at)}"
+                            data-ref="${sec.key}" data-i="${i}" data-f="at"></td>
+                        <td><input type="text" value="${esc(r.text)}"
+                            data-ref="${sec.key}" data-i="${i}" data-f="text"></td>
+                        <td><button class="ref-row-del" data-del="${sec.key}" data-i="${i}"
+                            title="Remove">×</button></td>
+                    </tr>`).join('');
+                return `<h4 style="margin:12px 0 4px; font-size:0.9em;">${esc(sec.title)}</h4>
+                    <table class="ref-table">
+                        <thead><tr><th>${esc(sec.atLabel)}</th><th>${esc(sec.textLabel)}</th><th></th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                    <button data-add="${sec.key}" style="font-size:0.8em; padding:6px 10px;">Add a row</button>`;
+            }).join('');
+
+            document.querySelectorAll('[data-ref]').forEach(inp => {
+                inp.onchange = () => {
+                    const { ref: key, i, f } = inp.dataset;
+                    ref[key][+i][f] = f === 'at' ? (parseInt(inp.value, 10) || 0) : inp.value;
+                };
+            });
+            document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+                ref[b.dataset.add].push({ at: 0, text: '' });
+                renderRef();
+            });
+            document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+                ref[b.dataset.del].splice(+b.dataset.i, 1);
+                renderRef();
+            });
+        }
+
+        document.getElementById('ref-save').addEventListener('click', async () => {
+            // Kept under its own key, so starting a new game never wipes the
+            // half-hour spent copying the board across.
+            const res = await apiPost('/api/game_state/ark_nova_ref', { state: ref });
+            document.getElementById('ref-saved').textContent =
+                res?.success ? 'Reference saved' : 'Could not save';
+            render();
+        });
+
         document.getElementById('reset').addEventListener('click', async () => {
-            if (!confirm('Start a new game? The current numbers are cleared.')) return;
-            st = { ...BLANK, workers: [false, false, false, false, false], seen: [],
-                   started: new Date().toISOString().slice(0, 10) };
+            if (!confirm('Start a new game? The markers reset; the board reference is kept.')) return;
+            st = { ...BLANK, seen: [] };
             document.getElementById('alerts').innerHTML = '';
             render();
             await apiPost('/api/game_state/ark_nova', { state: st });
@@ -281,17 +353,25 @@
         });
 
         async function load() {
-            const d = await apiGet('/api/game_state/ark_nova');
-            if (d?.state && typeof d.state === 'object') {
-                st = { ...BLANK, ...d.state };
-                st.workers = Array.isArray(st.workers) ? st.workers : [...BLANK.workers];
+            const [game, board] = await Promise.all([
+                apiGet('/api/game_state/ark_nova'),
+                apiGet('/api/game_state/ark_nova_ref'),
+            ]);
+            if (game?.state && typeof game.state === 'object') {
+                st = { ...BLANK, ...game.state };
                 st.seen = Array.isArray(st.seen) ? st.seen : [];
                 document.getElementById('saved').textContent =
-                    d.updated ? 'Last saved ' + new Date(d.updated).toLocaleString() : '';
+                    game.updated ? 'Last saved ' + new Date(game.updated).toLocaleString() : '';
             }
-            // null on the first pass: catch up the seen list without firing a
-            // banner for every threshold already passed days ago.
-            checkMilestones(null);
+            if (board?.state && typeof board.state === 'object') {
+                ref = { ...JSON.parse(JSON.stringify(BLANK_REF)), ...board.state };
+            } else {
+                // Nothing filled in yet, so open the panel rather than leave the
+                // page looking broken with blank payoffs.
+                document.getElementById('ref-panel').open = true;
+            }
+            checkMilestones(false);
+            renderRef();
             render();
         }
         load();
