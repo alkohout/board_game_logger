@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ark Nova</title>
-    <link rel="stylesheet" href="./styles.css?v=32">
+    <link rel="stylesheet" href="./styles.css?v=33">
     <link rel="apple-touch-icon" href="./favicon.png">
     <link rel="icon" type="image/png" href="./favicon.png">
     <style>
@@ -28,6 +28,7 @@
         .cell-stuck{ background: rgba(255,138,128,0.20); color: #FF8A80; font-weight: bold; }
         .unplayed td.name { color: #777; }
         .best { color: #FFD54F; font-size: 0.8em; white-space: nowrap; }
+        .rung-name { display: block; color: #777; font-size: 0.85em; font-weight: normal; }
         .legend { color: #888; font-size: 0.78em; margin: 2px 0 14px; }
         .legend span { margin-right: 12px; white-space: nowrap; }
         .caption { color: #ccc; font-size: 0.9em; margin: 0 0 4px; }
@@ -46,8 +47,9 @@
 
     <div class="form-container">
         <h2>Ark Nova</h2>
-        <p class="caption">Each map against the appeal you start the bot on.
-           Greyed out means never played on that rung.</p>
+        <p class="caption">Each map against your starting appeal, which is what
+           sets the difficulty — <strong>lower is harder</strong>: 20 is easy, 10
+           normal, 0 a challenge. Greyed out means never played on that rung.</p>
         <p class="aside" style="margin:0 0 8px;">Won and lost count <em>finished</em>
            games. A game left set up is logged more than once, so these are fewer
            than the times you sat down to it.</p>
@@ -58,7 +60,7 @@
 
     <script src="./config.js"></script>
     <script src="./api.js"></script>
-    <script src="./tabs.js?v=32"></script>
+    <script src="./tabs.js?v=33"></script>
     <script>
         requireAuth();
         renderTabs('games');
@@ -84,15 +86,21 @@
                 return;
             }
 
+            // Hardest first, so the column you're working towards is on the
+            // left rather than buried at the far end of a scroll.
+            const appeals = [...data.appeals].sort((a, b) => a - b);
+            const names = data.appeal_names || {};
             const head = '<tr><th class="name">Map</th>' +
-                data.appeals.map(a => `<th>${a}</th>`).join('') +
-                '<th>Best</th></tr>';
+                appeals.map(a => `<th>${a}${names[a]
+                    ? `<span class="rung-name">${esc(names[a])}</span>` : ''}</th>`).join('') +
+                '<th>Hardest<br>beaten</th></tr>';
             const rows = data.maps.map(m => {
                 const extra = m.no_appeal.plays
                     ? `<span class="no-appeal"> +${m.no_appeal.plays} no appeal</span>` : '';
                 return `<tr class="${m.plays ? '' : 'unplayed'}">
                     <td class="name">Map ${esc(m.map)}${extra}</td>
-                    ${m.cells.map(cell).join('')}
+                    ${appeals.map(a => cell(m.cells.find(c => c.appeal === a)
+                        || { plays: 0 })).join('')}
                     <td class="cell best">${m.best_appeal !== null ? m.best_appeal : ''}</td>
                 </tr>`;
             }).join('');
@@ -107,14 +115,16 @@
 
             // The obvious next rung: one step above your best win on each map
             // you've actually beaten something on.
+            // Harder means a lower starting appeal, so the next rung is the
+            // largest recorded appeal below your hardest win.
             const climbed = data.maps.filter(m => m.best_appeal !== null);
             const next = climbed.length
-                ? `<p class="next-up"><strong>Next rung up:</strong> ` +
+                ? `<p class="next-up"><strong>Next step down:</strong> ` +
                   climbed.map(m => {
-                      const above = data.appeals.find(a => a > m.best_appeal);
-                      return above === undefined
-                          ? `Map ${esc(m.map)} — nothing higher on the ladder`
-                          : `Map ${esc(m.map)} at ${above}`;
+                      const below = [...appeals].reverse().find(a => a < m.best_appeal);
+                      return below === undefined
+                          ? `Map ${esc(m.map)} — you've beaten the hardest rung`
+                          : `Map ${esc(m.map)} at ${below}${names[below] ? ` (${names[below]})` : ''}`;
                   }).join(' · ') + `</p>`
                 : '';
 

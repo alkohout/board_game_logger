@@ -2587,9 +2587,12 @@ def ark_nova_fields(data):
     return zoo_map, appeal
 
 
-# The difficulty ladder people actually climb, in fives. Any appeal you've
-# recorded that isn't on it gets a column too, so an odd rung is never hidden.
+# Starting appeal sets the difficulty, and LOWER is harder: the official solo
+# rules give 20 as easy, 10 as normal and 0 as "a challenge". The ladder is
+# climbed downwards. Any appeal recorded that isn't a multiple of five gets a
+# column too, so an odd rung is never hidden.
 ARK_NOVA_APPEAL_LADDER = [0, 5, 10, 15, 20, 25, 30]
+ARK_NOVA_APPEAL_NAMES = {20: 'easy', 10: 'normal', 0: 'challenge'}
 
 
 @app.route('/api/ark_nova_stats')
@@ -2627,8 +2630,9 @@ def api_ark_nova_stats():
                   and 'won' in (p['result'] or '').lower()]
         rows.append({
             'map': zoo_map, 'cells': cells,
-            # The rung to beat next is the one above your best win.
-            'best_appeal': max(beaten) if beaten else None,
+            # The hardest win on this map is the LOWEST starting appeal beaten,
+            # and the rung to try next is the one below it.
+            'best_appeal': min(beaten) if beaten else None,
             'no_appeal': _tally([p for p in mine if p['start_appeal'] is None]),
             **_tally(mine),
         })
@@ -2636,6 +2640,9 @@ def api_ark_nova_stats():
     unrecorded = sum(1 for p in plays if not p['zoo_map'])
     return jsonify({
         'appeals': appeals, 'maps': rows,
+        'appeal_names': ARK_NOVA_APPEAL_NAMES,
+        # Said explicitly so the page never has to assume it.
+        'harder_is': 'lower',
         'stuck_after_losses': STUCK_AFTER_LOSSES,
         'total_plays': len(plays),
         'total_games': sum(1 for p in plays
