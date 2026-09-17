@@ -64,24 +64,33 @@ def today_local():
 RECORDS_START = date(2024, 1, 1)
 
 
+# The four calendar groupings, as the expression each one buckets plays by.
+_RECORD_PERIODS = {
+    'day': 'date_played',
+    'week': "date_trunc('week', date_played::timestamp)::date",
+    'month': "date_trunc('month', date_played::timestamp)::date",
+    'year': "date_trunc('year', date_played::timestamp)::date",
+}
+
+
 def period_records(cur):
     """Best-ever plays per calendar day/week/month/year. Weeks start Monday,
-    matching how the current-period counts are worked out."""
-    def best(period_expr):
-        cur.execute(f"""
-            SELECT {period_expr} AS period, COUNT(*) AS plays
-            FROM games WHERE date_played >= %s
-            GROUP BY period ORDER BY plays DESC, period DESC LIMIT 1
-        """, (RECORDS_START,))
-        row = cur.fetchone()
-        return {'count': row[1], 'start': row[0]} if row else {'count': 0, 'start': None}
+    matching how the current-period counts are worked out.
 
-    return {
-        'day': best("date_played"),
-        'week': best("date_trunc('week', date_played::timestamp)::date"),
-        'month': best("date_trunc('month', date_played::timestamp)::date"),
-        'year': best("date_trunc('year', date_played::timestamp)::date"),
-    }
+    One statement rather than four: same four scans for Postgres, but a quarter
+    of the round trips, and round trips are what this costs.
+    """
+    parts = ' UNION ALL '.join(
+        f"""(SELECT '{name}' AS period_name, {expr}::text AS period_start,
+                    COUNT(*) AS plays
+             FROM games WHERE date_played >= %(since)s
+             GROUP BY {expr} ORDER BY plays DESC, {expr} DESC LIMIT 1)"""
+        for name, expr in _RECORD_PERIODS.items())
+    cur.execute(parts, {'since': RECORDS_START})
+    found = {name: {'count': plays, 'start': date.fromisoformat(start)}
+             for name, start, plays in cur.fetchall()}
+    return {name: found.get(name, {'count': 0, 'start': None})
+            for name in _RECORD_PERIODS}
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB upload limit
@@ -109,6 +118,14 @@ MIN_PASSWORD_LENGTH = 8
 
 # Endpoints reachable without a session.
 PUBLIC_API_PATHS = {'/api/login', '/api/signup'}
+
+
+# Verifying a password is deliberately slow. Skipping it for an unknown
+# address makes "no such account" answer in a fraction of the time, which is a
+# way of asking whether an address is registered — exactly what signup refuses
+# to answer. Unknown addresses are checked against this instead, so both paths
+# cost the same. Computed once at import.
+_ABSENT_USER_HASH = generate_password_hash('no account has this password')
 
 
 def token_serializer():
@@ -321,12 +338,22 @@ class PooledConnection:
     one round trip. Clearing app.user_id here would be a second, and is not
     needed: get_db_connection sets it on every checkout, to '' when there is
     no caller, so nothing inherits the previous request's scope.
+
+    A pool of None means "not pooled": the connection is simply closed on
+    release. _checkout falls back to that when every pooled connection is dead,
+    and the fallback has to be the same shape as the normal path — a bare
+    psycopg2 connection has no _closed and no _release, so handing one back
+    turned a recoverable blip into an AttributeError in teardown.
     """
 
     def __init__(self, pool, conn):
         self._pool = pool
         self._conn = conn
         self._closed = False
+        # Which app.user_id this connection is currently stamped with, or None
+        # for "unknown". On the wrapper, so a connection coming out of the pool
+        # always starts unknown and gets stamped afresh.
+        self._scope = None
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
@@ -340,10 +367,38 @@ class PooledConnection:
         exists to avoid. teardown_request does the real release.
         """
 
+    def stamp(self, wanted):
+        """Set app.user_id for the session, and remember that we did."""
+        cur = self._conn.cursor()
+        cur.execute("SELECT set_config('app.user_id', %s, false)", (wanted,))
+        cur.close()
+        self._scope = wanted
+
+    def rollback(self):
+        """Roll back, then put the caller's scope back.
+
+        Postgres has no non-transactional SET, so the stamp is made inside
+        whatever transaction is open and a rollback discards it along with
+        everything else. Routes that roll back carry on using the cursor they
+        already have and never ask for the connection again, so re-stamping
+        lazily would never happen — every query after the rollback would run
+        unscoped, and row-level security would quietly match nothing rather
+        than raise. One extra round trip, only on error paths.
+        """
+        self._conn.rollback()
+        if self._scope is not None:
+            self.stamp(self._scope)
+
     def _release(self):
         if self._closed:
             return
         self._closed = True
+        if self._pool is None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            return
         try:
             self._conn.rollback()
             self._pool.putconn(self._conn)
@@ -354,6 +409,7 @@ class PooledConnection:
                 self._pool.putconn(self._conn, close=True)
             except Exception:
                 pass
+            _POOL_IDLE_SINCE.pop(id(self._conn), None)
 
 
 _POOL_IDLE_SINCE = {}
@@ -379,10 +435,13 @@ def _checkout():
                 conn.rollback()
             except Exception:
                 pool.putconn(conn, close=True)
+                _POOL_IDLE_SINCE.pop(id(conn), None)
                 continue
+        _POOL_IDLE_SINCE.pop(id(conn), None)
         return PooledConnection(pool, conn)
+    # Every pooled connection was dead. Wrapped, not bare: see PooledConnection.
     args, kwargs = _connection_settings()
-    return psycopg2.connect(*args, **kwargs)
+    return PooledConnection(None, psycopg2.connect(*args, **kwargs))
 
 
 def raw_db_connection():
@@ -418,6 +477,12 @@ def get_db_connection():
     can filter, and so INSERTs pick up the right owner from the column default.
     SET LOCAL would be undone by the first commit, so this is session-level and
     re-stamped on every checkout.
+
+    The stamp still lands inside whatever transaction is already open — reading
+    the caller's token opens one — and there is no way to avoid that, because
+    Postgres has no non-transactional SET. PooledConnection.rollback is what
+    makes it safe: it re-stamps, so a rollback can't leave the rest of the
+    request running unscoped.
     """
     conn = raw_db_connection()
     user = getattr(g, 'user', None) if has_request_context() else None
@@ -432,18 +497,7 @@ def get_db_connection():
     # Once per request, not once per call: routes call this repeatedly and each
     # stamp is a round trip to a database three time zones away.
     if getattr(conn, '_scope', None) != wanted:
-        was_autocommit = conn.autocommit
-        # Autocommit is a client-side flag, so this replaces the separate
-        # COMMIT round trip the stamp used to need with nothing at all.
-        conn.autocommit = True
-        cur = conn.cursor()
-        cur.execute("SELECT set_config('app.user_id', %s, false)", (wanted,))
-        cur.close()
-        conn.autocommit = was_autocommit
-        try:
-            conn._scope = wanted
-        except AttributeError:
-            pass
+        conn.stamp(wanted)
     return conn
 
 
@@ -1406,6 +1460,8 @@ def api_login():
         """, (email,))
         row = cur.fetchone()
 
+        if not row:
+            check_password_hash(_ABSENT_USER_HASH, password)   # same cost either way
         if not row or not check_password_hash(row[5], password):
             cur.execute("INSERT INTO login_attempts (email, ip) VALUES (%s, %s)",
                         (email, request.headers.get('X-Forwarded-For', request.remote_addr)))
@@ -1708,56 +1764,76 @@ def api_dashboard():
     last_day_of_last_year = start_of_year - timedelta(days=1)
     start_of_last_year = last_day_of_last_year.replace(month=1, day=1)
 
-    def count(q, *args): cur.execute(q, args); return cur.fetchone()[0]
-    def most_played(start, end=None):
-        if end:
-            cur.execute("""SELECT game_title, COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s
-                GROUP BY game_title ORDER BY COUNT(*) DESC LIMIT 1""", (start, end))
-        else:
-            cur.execute("""SELECT game_title, COUNT(*) FROM games WHERE date_played >= %s
-                GROUP BY game_title ORDER BY COUNT(*) DESC LIMIT 1""", (start,))
-        row = cur.fetchone()
-        return {'game': row[0], 'count': row[1]} if row else {'game': None, 'count': 0}
-
-    # Period counts
-    td = count("SELECT COUNT(*) FROM games WHERE date_played = %s", today)
-    yd = count("SELECT COUNT(*) FROM games WHERE date_played = %s", today - timedelta(days=1))
-    tw = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_week)
-    tm = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_month)
-    ty = count("SELECT COUNT(*) FROM games WHERE date_played >= %s", start_of_year)
-    lw = count("SELECT COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s", start_of_last_week, end_of_last_week)
-    lm = count("SELECT COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s", start_of_last_month, last_day_of_last_month)
-    ly = count("SELECT COUNT(*) FROM games WHERE date_played BETWEEN %s AND %s", start_of_last_year, last_day_of_last_year)
-
-    # Averages
+    # Every period count in one pass. These were twelve separate statements,
+    # each a full scan of games — the same work Postgres does once here, but
+    # twelve times the waiting.
+    FAR = date(9999, 12, 31)          # stands in for "no upper bound"
+    spans = {'today': (today, today),
+             'yesterday': (today - timedelta(days=1), today - timedelta(days=1)),
+             'this_week': (start_of_week, FAR),
+             'this_month': (start_of_month, FAR),
+             'this_year': (start_of_year, FAR),
+             'last_week': (start_of_last_week, end_of_last_week),
+             'last_month': (start_of_last_month, last_day_of_last_month),
+             'last_year': (start_of_last_year, last_day_of_last_year)}
     ref = date(2024, 1, 1)
+    ref_y = date(2023, 1, 1)
+    # The averages divide a count of completed periods, so each stops at the
+    # start of the current one rather than running to today.
+    spans['to_week'] = (ref, start_of_week - timedelta(days=1))
+    spans['to_month'] = (ref, start_of_month - timedelta(days=1))
+    spans['to_year'] = (ref_y, start_of_year - timedelta(days=1))
+    spans['to_today'] = (ref, today - timedelta(days=1))
+
+    names = sorted(spans)
+    params = {}
+    for n in names:
+        params[f'{n}_lo'], params[f'{n}_hi'] = spans[n]
+    cur.execute(
+        'SELECT ' + ', '.join(
+            f'COUNT(*) FILTER (WHERE date_played BETWEEN %({n}_lo)s AND %({n}_hi)s)'
+            for n in names) + ' FROM games', params)
+    got = dict(zip(names, cur.fetchone()))
+
+    td, yd = got['today'], got['yesterday']
+    tw, tm, ty = got['this_week'], got['this_month'], got['this_year']
+    lw, lm, ly = got['last_week'], got['last_month'], got['last_year']
+
     total_days = (start_of_week - ref).days
     num_weeks = total_days // 7 if total_days >= 7 else 0
-    if num_weeks:
-        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref, start_of_week))
-        weekly_avg = round(cur.fetchone()[0] / num_weeks)
-    else:
-        weekly_avg = 0
+    weekly_avg = round(got['to_week'] / num_weeks) if num_weeks else 0
     num_months = (start_of_month.year - ref.year) * 12 + (start_of_month.month - ref.month)
-    if num_months:
-        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref, start_of_month))
-        monthly_avg = round(cur.fetchone()[0] / num_months)
-    else:
-        monthly_avg = 0
-    ref_y = date(2023, 1, 1)
+    monthly_avg = round(got['to_month'] / num_months) if num_months else 0
     num_years = start_of_year.year - ref_y.year
-    if num_years:
-        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref_y, start_of_year))
-        yearly_avg = round(cur.fetchone()[0] / num_years)
-    else:
-        yearly_avg = 0
-
+    yearly_avg = round(got['to_year'] / num_years) if num_years else 0
     num_days = (today - ref).days
-    if num_days > 0:
-        cur.execute("SELECT COUNT(*) FROM games WHERE date_played >= %s AND date_played < %s", (ref, today))
-        daily_avg = round(cur.fetchone()[0] / num_days, 1)
-    else:
-        daily_avg = 0
+    daily_avg = round(got['to_today'] / num_days, 1) if num_days > 0 else 0
+
+    # The most played game in each period, also in one statement. The old
+    # version ordered by count alone, so which game a tie reported changed
+    # between calls; game_title breaks it, so the answer is stable.
+    mp_spans = {k: spans[k] for k in ('this_week', 'last_week', 'this_month',
+                                      'last_month', 'this_year', 'last_year')}
+    mp_names = sorted(mp_spans)
+    mp_params = {}
+    values = []
+    for i, n in enumerate(mp_names):
+        mp_params[f'l{i}'], mp_params[f'a{i}'], mp_params[f'b{i}'] = n, *mp_spans[n]
+        values.append(f'(%(l{i})s, %(a{i})s::date, %(b{i})s::date)')
+    cur.execute(f"""
+        WITH periods(label, lo, hi) AS (VALUES {', '.join(values)})
+        SELECT label, game_title, plays FROM (
+            SELECT p.label, g.game_title, COUNT(*) AS plays,
+                   ROW_NUMBER() OVER (PARTITION BY p.label
+                                      ORDER BY COUNT(*) DESC, g.game_title) AS rn
+            FROM periods p JOIN games g ON g.date_played BETWEEN p.lo AND p.hi
+            GROUP BY p.label, g.game_title
+        ) ranked WHERE rn = 1
+    """, mp_params)
+    top = {label: {'game': title, 'count': plays}
+           for label, title, plays in cur.fetchall()}
+    most_played_by_period = {n: top.get(n, {'game': None, 'count': 0})
+                             for n in mp_spans}
 
     records = {k: {'count': v['count'], 'start': v['start'].isoformat() if v['start'] else None}
                for k, v in period_records(cur).items()}
@@ -1774,14 +1850,7 @@ def api_dashboard():
             'weekly_avg': weekly_avg, 'monthly_avg': monthly_avg, 'yearly_avg': yearly_avg,
         },
         'records': records,
-        'most_played': {
-            'this_week': most_played(start_of_week),
-            'last_week': most_played(start_of_last_week, end_of_last_week),
-            'this_month': most_played(start_of_month),
-            'last_month': most_played(start_of_last_month, last_day_of_last_month),
-            'this_year': most_played(start_of_year),
-            'last_year': most_played(start_of_last_year, last_day_of_last_year),
-        },
+        'most_played': most_played_by_period,
     }
     cur.close()
     conn.close()
@@ -2018,11 +2087,19 @@ def api_games_overview():
 def api_all_games():
     conn = get_db_connection()
     cur = conn.cursor()
+    # The latest note per title, gathered in one pass and joined on, rather
+    # than a correlated subquery that re-scanned the table once per title —
+    # 165 scans and 19.7ms against 2.2ms for this, measured on live data.
     cur.execute("""
-        SELECT game_title, RANK() OVER (ORDER BY COUNT(*) DESC), COUNT(*),
-            COALESCE((SELECT notes FROM games g2 WHERE g2.game_title = g.game_title
-                AND g2.notes IS NOT NULL ORDER BY g2.date_played DESC LIMIT 1), '')
-        FROM games g GROUP BY game_title ORDER BY game_title
+        WITH latest AS (
+            SELECT DISTINCT ON (game_title) game_title, notes
+            FROM games WHERE btrim(COALESCE(notes, '')) <> ''
+            ORDER BY game_title, date_played DESC, id DESC
+        )
+        SELECT g.game_title, RANK() OVER (ORDER BY COUNT(*) DESC), COUNT(*),
+               COALESCE(MAX(latest.notes), '')
+        FROM games g LEFT JOIN latest ON latest.game_title = g.game_title
+        GROUP BY g.game_title ORDER BY g.game_title
     """)
     rows = [{'game': r[0], 'rank': r[1], 'play_count': r[2], 'latest_note': r[3]} for r in cur.fetchall()]
     cur.close()
@@ -3199,20 +3276,33 @@ MIN_BALANCE_NZD = 0.25         # a rulebook question with images can cost ~0.20
 TOPUP_OPTIONS_NZD = (5, 10, 20)
 
 
+def month_start_local():
+    """Midnight on the 1st, in the caller's zone, as an aware timestamp.
+
+    date_trunc('month', now()) would use the database session's zone, which is
+    UTC — so in New Zealand the free allowance reset thirteen hours late and
+    questions asked in that window billed to the month before. Every other day
+    boundary in the app is per account; this one was not.
+    """
+    now = datetime.now(user_tz())
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
 def ai_balance(user_id):
     """What this account has left to spend, split by where it came from."""
     conn = get_db_connection()
     cur = conn.cursor()
+    month = month_start_local()
     cur.execute("""
         SELECT
           COALESCE(SUM(cost_nzd) FILTER (
               WHERE funded_by = 'free'
-                AND created_at >= date_trunc('month', now())), 0),
+                AND created_at >= %(month)s), 0),
           COALESCE(SUM(cost_nzd) FILTER (WHERE funded_by = 'credit'), 0),
           COALESCE(SUM(cost_nzd) FILTER (
-              WHERE created_at >= date_trunc('month', now())), 0)
-        FROM ai_usage WHERE user_id = %s
-    """, (user_id,))
+              WHERE created_at >= %(month)s), 0)
+        FROM ai_usage WHERE user_id = %(user)s
+    """, {'month': month, 'user': user_id})
     free_used, credit_used, month_spend = cur.fetchone()
     cur.execute("""
         SELECT COALESCE(SUM(amount_nzd), 0) FROM credit_purchases
@@ -3246,7 +3336,9 @@ def balance_after(user=None):
 def ai_spend_blocked():
     """Response to return if this user can't afford a question, else None."""
     user = current_user()
-    if user.get('is_owner'):
+    # balance_after just above guards this; not doing so here only worked
+    # because every caller happens to sit behind require_login.
+    if not user or user.get('is_owner'):
         return None
     balance = ai_balance(user['id'])
     if balance['available'] < MIN_BALANCE_NZD:
@@ -3416,7 +3508,12 @@ def stripe_webhook():
 
     if event['type'] == 'checkout.session.completed':
         session_id = event['data']['object']['id']
-        conn = raw_db_connection()          # no logged-in user on this request
+        # get_db_connection, not raw: with no caller it stamps app.user_id to
+        # '' explicitly. raw_db_connection would leave whatever scope the last
+        # request to commit on this pooled connection had. The two functions
+        # below are SECURITY DEFINER so it makes no difference to them, but an
+        # ordinary query added here would silently run as somebody else.
+        conn = get_db_connection()
         cur = conn.cursor()
         # SECURITY DEFINER function: credits the row without disabling RLS.
         cur.execute("SELECT * FROM credit_mark_paid(%s)", (session_id,))
@@ -3429,12 +3526,12 @@ def stripe_webhook():
         # A repeat delivery finds nothing pending and is a no-op, which is the
         # point: Stripe retries, and a top-up must not be credited twice.
     elif event['type'] == 'checkout.session.expired':
-        conn = raw_db_connection()
+        conn = get_db_connection()
         cur = conn.cursor()
         # SECURITY DEFINER, for the same reason as the paid path: this request
-        # has no logged-in caller, so the connection carries no app.user_id and
-        # a plain UPDATE matched nothing under RLS — abandoned checkouts stayed
-        # 'pending' for ever.
+        # has no logged-in caller, so app.user_id is empty and a plain UPDATE
+        # matched nothing under RLS — abandoned checkouts stayed 'pending' for
+        # ever.
         cur.execute("SELECT * FROM credit_mark_cancelled(%s)",
                     (event['data']['object']['id'],))
         row = cur.fetchone()
