@@ -34,14 +34,36 @@
             cursor: zoom-in; border: 1px solid rgba(255,255,255,0.15);
         }
         .shot-empty { color: #888; font-size: 0.82em; }
-        /* Full size, over the page — a board is unreadable at thumbnail size. */
+        /* Full size, over the page — a board is unreadable at thumbnail size,
+           and fitting a 3600px photo to a phone screen isn't much better, so
+           the stage below zooms and pans. */
         #shot-viewer {
             position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 50;
             display: none; align-items: center; justify-content: center; padding: 12px;
         }
         #shot-viewer.open { display: flex; flex-direction: column; }
-        #shot-viewer img { max-width: 100%; max-height: 84vh; object-fit: contain; }
-        .shot-bar { margin-top: 10px; display: flex; gap: 8px; }
+        /* touch-action: none, or the browser pans and pinches the page itself
+           and the handlers below never see the gesture. */
+        .shot-stage {
+            flex: 1; width: 100%; min-height: 0; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
+            touch-action: none; user-select: none;
+        }
+        .shot-stage img {
+            max-width: 100%; max-height: 100%; object-fit: contain;
+            transform-origin: center center; -webkit-user-drag: none;
+            will-change: transform;
+        }
+        .shot-stage.zoomed img { cursor: grab; }
+        .shot-stage.panning img { cursor: grabbing; }
+        .shot-bar { margin-top: 10px; display: flex; gap: 8px; align-items: center;
+                    flex-wrap: wrap; justify-content: center; }
+        .shot-zoom { display: flex; gap: 6px; align-items: center; }
+        .shot-zoom button { width: 44px; padding: 8px 0; font-size: 1.1em; line-height: 1; }
+        #shot-level { color: #bbb; font-size: 0.82em; min-width: 52px; text-align: center;
+                      font-variant-numeric: tabular-nums; }
+        .shot-hint { color: #777; font-size: 0.75em; width: 100%; text-align: center;
+                     margin-top: 2px; }
 
         /* Ares end state: a small you/bot grid, so eight numbers stay readable. */
         .ares-grid { border-collapse: collapse; width: 100%; margin-bottom: 6px; }
@@ -134,10 +156,19 @@
 
 <!-- Full-size photo, over everything. Tapping the backdrop closes it. -->
 <div id="shot-viewer">
-    <img id="shot-viewer-img" alt="Photo of the table">
+    <div class="shot-stage" id="shot-stage">
+        <img id="shot-viewer-img" alt="Photo of the table">
+    </div>
     <div class="shot-bar">
+        <span class="shot-zoom">
+            <button type="button" id="shot-out" aria-label="Zoom out">−</button>
+            <span id="shot-level">100%</span>
+            <button type="button" id="shot-in" aria-label="Zoom in">+</button>
+            <button type="button" id="shot-fit" style="width:auto; padding:8px 12px;">Fit</button>
+        </span>
         <button type="button" id="shot-close">Close</button>
         <button type="button" id="shot-delete" class="btn-red">Delete photo</button>
+        <span class="shot-hint" id="shot-hint"></span>
     </div>
 </div>
 
@@ -801,23 +832,170 @@ async function uploadPhoto(gameId, file) {
 // tracked separately for deleting.
 let viewingPhotoId = null;
 
+// ---- zoom and pan --------------------------------------------------------
+// Fitting a board photo to the screen is the whole problem: the detail is in
+// the file, it just isn't on screen. The image is moved with a CSS transform
+// rather than by resizing it, so the browser re-rasterises from the source and
+// zooming in actually shows more, up to one image pixel per screen pixel.
+const shotStage = document.getElementById('shot-stage');
+const shotImg = document.getElementById('shot-viewer-img');
+let zScale = 1, zX = 0, zY = 0, zMax = 4;
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// Panning stops where the image edge reaches the middle of the stage, so it
+// can never be flung somewhere you have to hunt for it.
+function clampPan() {
+    const overX = Math.max(0, (shotImg.offsetWidth * zScale - shotStage.clientWidth) / 2);
+    const overY = Math.max(0, (shotImg.offsetHeight * zScale - shotStage.clientHeight) / 2);
+    zX = clamp(zX, -overX, overX);
+    zY = clamp(zY, -overY, overY);
+}
+
+function applyZoom() {
+    clampPan();
+    shotImg.style.transform = `translate(${zX}px, ${zY}px) scale(${zScale})`;
+    shotStage.classList.toggle('zoomed', zScale > 1);
+    document.getElementById('shot-level').textContent = Math.round(zScale * 100) + '%';
+}
+
+function fitShot() {
+    zScale = 1; zX = 0; zY = 0;
+    applyZoom();
+}
+
+// Zoom about a point, so what you are looking at stays under your finger
+// rather than sliding away towards the middle.
+function zoomAt(clientX, clientY, factor) {
+    const r = shotStage.getBoundingClientRect();
+    const px = clientX - (r.left + r.width / 2);
+    const py = clientY - (r.top + r.height / 2);
+    const next = clamp(zScale * factor, 1, zMax);
+    const ratio = next / zScale;
+    zX = px - ratio * (px - zX);
+    zY = py - ratio * (py - zY);
+    zScale = next;
+    applyZoom();
+}
+
+const stageCentre = () => {
+    const r = shotStage.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+};
+const zoomStep = f => zoomAt(...stageCentre(), f);
+
+// How far in it is worth going: enough to show every pixel the file has, but
+// always enough to be useful even for a small image.
+shotImg.addEventListener('load', () => {
+    const fitted = shotImg.offsetWidth || 1;
+    zMax = clamp(shotImg.naturalWidth / fitted, 2, 12);
+    const detail = shotImg.naturalWidth >= fitted * 1.6;
+    document.getElementById('shot-hint').textContent = detail
+        ? 'Pinch, scroll or double-tap to zoom — drag to move around'
+        : '';
+    fitShot();
+});
+
+// Pointer events cover mouse, touch and pen with one set of handlers.
+const pointers = new Map();
+let pinchDist = 0, panFrom = null, dragged = false;
+
+shotStage.addEventListener('pointerdown', e => {
+    if (e.target !== shotImg && pointers.size === 0) return;   // let the backdrop close
+    shotStage.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, e);
+    dragged = false;
+    if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        pinchDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        panFrom = null;
+    } else if (zScale > 1) {
+        panFrom = { x: e.clientX, y: e.clientY, tx: zX, ty: zY };
+        shotStage.classList.add('panning');
+    }
+});
+
+shotStage.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, e);
+    if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (pinchDist > 0 && dist > 0) {
+            zoomAt((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2, dist / pinchDist);
+            dragged = true;
+        }
+        pinchDist = dist;
+    } else if (panFrom) {
+        zX = panFrom.tx + (e.clientX - panFrom.x);
+        zY = panFrom.ty + (e.clientY - panFrom.y);
+        if (Math.hypot(e.clientX - panFrom.x, e.clientY - panFrom.y) > 4) dragged = true;
+        applyZoom();
+    }
+});
+
+function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
+    if (pointers.size === 0) {
+        panFrom = null;
+        shotStage.classList.remove('panning');
+    }
+}
+shotStage.addEventListener('pointerup', endPointer);
+shotStage.addEventListener('pointercancel', endPointer);
+
+shotStage.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.18 : 1 / 1.18);
+}, { passive: false });
+
+// Double-tap is the gesture people try first on a phone.
+shotStage.addEventListener('dblclick', e => {
+    if (zScale > 1) fitShot();
+    else zoomAt(e.clientX, e.clientY, Math.min(3, zMax));
+});
+
+document.getElementById('shot-in').addEventListener('click', () => zoomStep(1.4));
+document.getElementById('shot-out').addEventListener('click', () => zoomStep(1 / 1.4));
+document.getElementById('shot-fit').addEventListener('click', fitShot);
+
 async function openShot(photoId) {
     const url = await apiImageUrl(`/api/photos/${photoId}`);
     if (!url) return;
     viewingPhotoId = photoId;
-    document.getElementById('shot-viewer-img').src = url;
+    fitShot();                       // never open the next photo still zoomed in
+    // Opened before the src is set, deliberately: the load handler measures the
+    // image to decide how far in zoom should go, and a display:none element
+    // measures zero.
     document.getElementById('shot-viewer').classList.add('open');
+    shotImg.src = url;
 }
 
 function closeShot() {
     document.getElementById('shot-viewer').classList.remove('open');
     viewingPhotoId = null;
+    // A pointer that went up somewhere we never saw would otherwise still be
+    // in here next time, and the viewer would open mid-pinch.
+    pointers.clear();
+    pinchDist = 0;
+    panFrom = null;
+    shotStage.classList.remove('panning');
 }
 document.getElementById('shot-close').addEventListener('click', closeShot);
 document.getElementById('shot-viewer').addEventListener('click', e => {
-    if (e.target.id === 'shot-viewer') closeShot();   // backdrop only
+    // Backdrop only, and never the release of a drag that happened to end
+    // outside the picture — that used to shut the viewer mid-pan.
+    if (dragged) { dragged = false; return; }
+    if (e.target.id === 'shot-viewer' || e.target.id === 'shot-stage') closeShot();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeShot(); });
+document.addEventListener('keydown', e => {
+    if (!document.getElementById('shot-viewer').classList.contains('open')) return;
+    if (e.key === 'Escape') closeShot();
+    else if (e.key === '+' || e.key === '=') zoomStep(1.4);
+    else if (e.key === '-' || e.key === '_') zoomStep(1 / 1.4);
+    else if (e.key === '0') fitShot();
+});
 
 document.getElementById('shot-delete').addEventListener('click', async () => {
     if (viewingPhotoId === null) return;

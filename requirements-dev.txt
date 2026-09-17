@@ -1,0 +1,1 @@
+dukpy      # tests/zoom_test.py — runs the viewer's JS without a browser
